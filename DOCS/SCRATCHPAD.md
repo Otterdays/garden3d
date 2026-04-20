@@ -2,15 +2,11 @@
 # SCRATCHPAD
 
 ## Active Tasks
+- [x] Prep project for Git (README, .gitignore, STYLE_GUIDE) <!-- id: 27 -->
 - [x] Basic Scene Setup (WebGPU Renderer) <!-- id: 2 -->
 - [x] Implement TSL Wind Shader for grass <!-- id: 3 -->
 - [x] Upgrade Growth System (multi-stage models) <!-- id: 4 -->
 - [x] Add ambient particle system (pollen) <!-- id: 6 -->
-- [x] Pivot architecture to Isometric Grid System <!-- id: 7 -->
-- [x] Pivot architecture to Isometric Grid System <!-- id: 7 -->
-- [x] Implement WASD Character Controller <!-- id: 8 -->
-- [x] Integrate Global State & Calendar logic <!-- id: 9 -->
-- [x] Create deterministic Tile Grid for farming <!-- id: 10 -->
 - [x] Pivot architecture to Isometric Grid System <!-- id: 7 -->
 - [x] Implement WASD Character Controller <!-- id: 8 -->
 - [x] Integrate Global State & Calendar logic <!-- id: 9 -->
@@ -36,11 +32,11 @@
 - None.
 
 ## Last 5 Actions
-1. MASSIVE environment overhaul: added stone well, market stall w/ red awning, pond w/ dock, dirt path network, scattered rocks, wildflowers, bushes, log pile, mailbox, full 4-sided farm fencing, 80-tree dense forest boundary.
-2. Added fire flicker animation (rotating mesh + pulsing light intensity).
-3. Abstracted engine logic: Split AI out into an isolated `src/entities/NPCManager.ts` file.
-4. Implemented NPC Wandering AI (Randomized town arrivals, idling, leaving map).
-5. Initiated "Angry QOL" Phase: Ranted about the 'baldy naked human amorphous' guy and listed 10 UX improvements.
+1. Prepped project for Git: Created README.md, expanded .gitignore, and added DOCS/STYLE_GUIDE.md.
+2. MASSIVE environment overhaul: added stone well, market stall w/ red awning, pond w/ dock, dirt path network, scattered rocks, wildflowers, bushes, log pile, mailbox, full 4-sided farm fencing, 80-tree dense forest boundary.
+3. Added fire flicker animation (rotating mesh + pulsing light intensity).
+4. Abstracted engine logic: Split AI out into an isolated `src/entities/NPCManager.ts` file.
+5. Implemented NPC Wandering AI (Randomized town arrivals, idling, leaving map).
 
 ## Out-of-Scope Observations
 - None
