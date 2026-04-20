@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Garden Life Sim | WebGPU</title>
+    <meta name="description" content="Experience a fully playable Life & Farming simulation with WebGPU." />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="canvas"></canvas>
+      <div id="ui">
+        
+        <div class="hud-top">
+          <div class="hud-panel clock-panel">
+            <span id="day-display">Day 1</span>
+            <span id="time-display">08:00 AM</span>
+            <button id="ff-btn" class="ff-btn hidden">⏭ Skip Night</button>
+          </div>
+          <div class="hud-panel wallet-panel">
+            🪙 <span id="gold-display">50</span> Gold
+          </div>
+        </div>
+
+        <div class="hud-bottom">
+          <div class="hotbar">
+            <button class="slot active" data-slot="0">
+              <span class="icon">🥕</span> 
+              <span class="label">Carrot</span>
+              <span class="qty" id="qty-carrot">5</span>
+            </button>
+            <button class="slot" data-slot="1">
+              <span class="icon">🌸</span> 
+              <span class="label">Flower</span>
+              <span class="qty" id="qty-flower">5</span>
+            </button>
+            <button class="slot" data-slot="2">
+              <span class="icon">💧</span> 
+              <span class="label">Water</span>
+              <span class="qty" id="qty-water">10</span>
+            </button>
+            <button class="slot action" data-slot="3">
+              <span class="icon">🪓</span> 
+              <span class="label">Harvest</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="toast-container"></div>
+        
+      </div>
+
+      <!-- Shop Modal Overlay -->
+      <div id="shop-modal" class="hidden">
+        <div class="shop-window">
+          <div class="shop-header">
+            <h2>Town Market</h2>
+            <button id="close-shop">✖</button>
+          </div>
+          <div class="shop-grid">
+            <div class="shop-item">
+              <div class="item-icon">🥕</div>
+              <div class="item-info">
+                <h3>Carrot Seeds</h3>
+                <p>Fast growing. Sells for 10G.</p>
+              </div>
+              <button class="buy-btn" data-type="carrot" data-price="5">Buy (-5G)</button>
+            </div>
+            <div class="shop-item">
+              <div class="item-icon">🌸</div>
+              <div class="item-info">
+                <h3>Flower Seeds</h3>
+                <p>Beautiful blooms. Sells for 25G.</p>
+              </div>
+              <button class="buy-btn" data-type="flower" data-price="12">Buy (-12G)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
