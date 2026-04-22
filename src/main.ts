@@ -1,5 +1,7 @@
+﻿import * as THREE from 'three/webgpu';
 import * as THREE from 'three/webgpu';
 import { NPCManager } from './entities/NPCManager';
+import { BeehiveManager, POLLINATOR_CONFIG } from './entities/BeehiveManager';
 
 // --- GAME STATE ---
 const STATE = {
@@ -18,10 +20,15 @@ const STATE = {
   gridUnits: 16,
   cameraZoom: 1.0
 };
-const APP_VERSION = '0.0.1 ALPHA';
+const APP_VERSION = '0.1.0';
+const STATE_HONEY = { count: 0 };
+const STATE_HONEY = { count: 0 };
+const STATE_HONEY = { count: 0 };
 
 // Crop tracking: key = "x,z"
 const cropGrid = new Map<string, any>();
+let beehiveManager: BeehiveManager | null = null;
+let activePlacementMode: 'beehive' | null = null;
 let playerMeshRef: THREE.Group | null = null;
 const cameraPan = new THREE.Vector3(0, 0, 0);
 const worldBounds = { minX: -12, maxX: 12, minZ: -12, maxZ: 12 };
