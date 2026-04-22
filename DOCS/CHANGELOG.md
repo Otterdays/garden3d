@@ -1,4 +1,4 @@
-<!-- PRESERVATION RULE: Never delete or replace content. Append or annotate only. -->
+<!-- PRESERVATION RULE: Never delete, overwrite, or replace changelog history. Use edit-in-place or append-only updates. -->
 # CHANGELOG
 
 ## [0.0.1 ALPHA]
@@ -42,3 +42,17 @@
 
 ### Documentation
 - Synced `DOCS/SUMMARY.md` with version/update-modal workflow notes.
+
+### Added
+- Added contextual interaction hint UI near the hotbar that previews what Space/click will do on the currently targeted tile.
+
+### Changed
+- Mouse interaction timing now resolves against current-frame grid targeting, fixing delayed/behind action feedback.
+- Expanded `DOCS/ROADMAP.md` with prioritized systems (durability/repair, soil fertility, quests, cooking buffs, reputation) and beginner UX upgrades.
+
+### Documentation
+- Synced docs for the new interaction hint UX and roadmap expansion in `DOCS/FEATURES.md` and `DOCS/SUMMARY.md`.
+
+### Documentation
+- Updated `DOCS/SBOM.md` with a fresh installed-version audit snapshot (2026-04-22).
+- Updated `DOCS/SUMMARY.md` to explicitly mark `0.1.0` as the current version and record security audit status.

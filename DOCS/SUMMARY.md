@@ -34,3 +34,15 @@
 2. Update in-game modal messaging in `src/main.ts` (`showChangelogModal`).
 3. Append matching notes in `DOCS/CHANGELOG.md`.
 4. Append a short sync note in `DOCS/SUMMARY.md` or `DOCS/FEATURES.md`.
+5. Preserve update-log history: do not delete or overwrite old entries; only edit in place or append.
+
+## Gameplay + UX Sync Update (2026-04-22)
+- Added contextual interaction hint UI above the hotbar so players can preview actions before clicking/pressing Space.
+- Interaction input timing was updated to resolve on current-frame grid targeting, fixing "behind-time" feedback.
+- `DOCS/ROADMAP.md` now includes a new expansion block for mid-game systems and beginner accessibility upgrades.
+
+## Project Status Update (2026-04-22)
+- **Current Version:** `0.1.0` (supersedes older `0.0.1 ALPHA` note above).
+- **Runtime Package:** `three@0.184.0`.
+- **Toolchain:** `vite@8.0.8`, `typescript@6.0.3`, `@types/three@0.184.0`.
+- **Security Audit:** `npm audit --omit=dev` returned 0 vulnerabilities.

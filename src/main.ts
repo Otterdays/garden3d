@@ -26,6 +26,7 @@ let playerMeshRef: THREE.Group | null = null;
 const cameraPan = new THREE.Vector3(0, 0, 0);
 const worldBounds = { minX: -12, maxX: 12, minZ: -12, maxZ: 12 };
 const edgeBlockers: Array<{ x: number; z: number; radius: number }> = [];
+const cameraFollowOffset = new THREE.Vector3(10, 10, 10); // true 45-degree isometric diagonal
 
 // Sound System (Web Audio API synthesis)
 const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -138,20 +139,11 @@ window.addEventListener('mousemove', e => {
 
 window.addEventListener('mousedown', () => {
   if (shopOpen) return;
-  // Interaction triggered by click
-  handleMouseInteraction();
+  // Queue click interaction so it resolves against the current frame's grid target.
+  mouseInteractionRequested = true;
 });
 
-function handleMouseInteraction() {
-  // We'll reuse the grid coordinates updated in the render loop
-  if (lastGridX !== null && lastGridZ !== null) {
-     handleInteraction(lastGridX, lastGridZ, globalScene);
-  }
-}
-
-let lastGridX: number | null = null;
-let lastGridZ: number | null = null;
-let globalScene: THREE.Scene;
+let mouseInteractionRequested = false;
 window.addEventListener('keydown', e => {
   if (e.key === ' ') keys.space = true;
   if (e.key === 'Shift') keys.shift = true;
@@ -323,6 +315,34 @@ function updateUI() {
   document.getElementById('day-display')!.innerText = `Day ${STATE.day}`;
 }
 
+function buildInteractionHint(tileKey: string): string {
+  const slotData = STATE.inventory[STATE.activeSlot];
+  const crop = cropGrid.get(tileKey);
+
+  if (slotData.type === 'harvest') {
+    if (!crop) return 'Harvest tool selected: no crop on this tile.';
+    if (crop.isReady) return `Ready crop detected. Press Space or click to harvest ${crop.type}.`;
+    return `${crop.type} is still growing. Come back later to harvest.`;
+  }
+
+  if (slotData.type === 'water') {
+    if (!crop) return 'Watering can selected: aim at a planted crop tile.';
+    if (slotData.qty <= 0) return 'Water can empty. Refill at the well before watering.';
+    if (crop.isWatered) return `${crop.type} is already watered for today.`;
+    return `Press Space or click to water ${crop.type}.`;
+  }
+
+  if (crop) return 'Tile occupied. Switch tool or pick an empty tile to plant.';
+  if (slotData.qty <= 0) return `Out of ${slotData.type} seeds. Buy more at the market stall.`;
+  return `Press Space or click to plant ${slotData.type}.`;
+}
+
+function updateInteractionHint(tileKey: string) {
+  const hintEl = document.getElementById('interaction-hint');
+  if (!hintEl) return;
+  hintEl.textContent = buildInteractionHint(tileKey);
+}
+
 async function init() {
   const canvas = document.querySelector('#canvas') as HTMLCanvasElement;
   const renderer = new THREE.WebGPURenderer({ 
@@ -341,8 +361,6 @@ async function init() {
   await renderer.init();
   
   const scene = new THREE.Scene();
-  globalScene = scene;
-  
   // Dynamic camera follows player
   const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
   
@@ -575,40 +593,112 @@ async function init() {
   worldGroup.add(dockGroup);
 
   // ====== FULL PERIMETER FENCING (Farm) ======
-  const fencePostGeo = new THREE.BoxGeometry(0.1, 0.8, 0.1);
-  const fenceBeamGeo = new THREE.BoxGeometry(STATE.tileSize, 0.05, 0.05);
-  const fenceMat = new THREE.MeshStandardNodeMaterial({ color: 0x5d4037, roughness: 0.9 });
+  const fencePostGeo = new THREE.BoxGeometry(0.14, 0.95, 0.14);
+  const fenceCapGeo = new THREE.ConeGeometry(0.11, 0.12, 4);
+  const fenceRailGeoX = new THREE.BoxGeometry(STATE.tileSize, 0.06, 0.06);
+  const fenceRailGeoZ = new THREE.BoxGeometry(0.06, 0.06, STATE.tileSize);
+  const fenceBraceGeoX = new THREE.BoxGeometry(STATE.tileSize * 0.9, 0.04, 0.04);
+  const fenceBraceGeoZ = new THREE.BoxGeometry(0.04, 0.04, STATE.tileSize * 0.9);
+  const fenceMat = new THREE.MeshStandardNodeMaterial({ color: 0x6d4c41, roughness: 0.9 });
+  const fenceAccentMat = new THREE.MeshStandardNodeMaterial({ color: 0x4e342e, roughness: 0.95 });
   const pStartX = 3 - (STATE.tileSize * 3);
   const pEndX = 3 + (STATE.tileSize * 3);
   const pStartZ = 2 - (STATE.tileSize * 2);
   const pEndZ = 2 + (STATE.tileSize * 2);
+  const southGateCenterX = 3;
+  const southGateWidth = STATE.tileSize * 1.4;
+  const southGateMinX = southGateCenterX - southGateWidth * 0.5;
+  const southGateMaxX = southGateCenterX + southGateWidth * 0.5;
 
-  // Helper to draw a fence row
+  // Helper to draw a detailed fence row.
   function drawFenceRow(x1: number, z1: number, x2: number, z2: number, axis: 'x' | 'z') {
     if (axis === 'x') {
+      let segIdx = 0;
       for (let x = x1; x <= x2; x += STATE.tileSize) {
+        const gateRow = Math.abs(z1 - pEndZ) < 0.001;
+        const postIsInGate = gateRow && x > southGateMinX && x < southGateMaxX;
+        if (postIsInGate) continue;
+
         const post = new THREE.Mesh(fencePostGeo, fenceMat);
-        post.position.set(x, 0.4, z1);
+        post.position.set(x, 0.47, z1);
         post.castShadow = true;
+        post.receiveShadow = true;
         worldGroup.add(post);
+
+        const cap = new THREE.Mesh(fenceCapGeo, fenceAccentMat);
+        cap.rotation.y = Math.PI * 0.25;
+        cap.position.set(x, 1.03, z1);
+        cap.castShadow = true;
+        worldGroup.add(cap);
+
         if (x < x2) {
-          const beam = new THREE.Mesh(fenceBeamGeo, fenceMat);
-          beam.position.set(x + STATE.tileSize/2, 0.6, z1);
-          worldGroup.add(beam);
+          const nextX = x + STATE.tileSize;
+          const nextIsInGate = gateRow && nextX > southGateMinX && nextX < southGateMaxX;
+          const spanCrossesGate = gateRow && (x < southGateMaxX && nextX > southGateMinX);
+          if (nextIsInGate || spanCrossesGate) {
+            segIdx++;
+            continue;
+          }
+
+          const topRail = new THREE.Mesh(fenceRailGeoX, fenceMat);
+          topRail.position.set(x + STATE.tileSize / 2, 0.72, z1);
+          topRail.castShadow = true;
+          worldGroup.add(topRail);
+
+          const midRail = new THREE.Mesh(fenceRailGeoX, fenceMat);
+          midRail.position.set(x + STATE.tileSize / 2, 0.5, z1);
+          midRail.castShadow = true;
+          worldGroup.add(midRail);
+
+          if (segIdx % 2 === 0) {
+            const brace = new THREE.Mesh(fenceBraceGeoX, fenceAccentMat);
+            brace.position.set(x + STATE.tileSize / 2, 0.6, z1);
+            brace.rotation.z = Math.PI * 0.12;
+            brace.castShadow = true;
+            worldGroup.add(brace);
+          } else {
+            const brace = new THREE.Mesh(fenceBraceGeoX, fenceAccentMat);
+            brace.position.set(x + STATE.tileSize / 2, 0.6, z1);
+            brace.rotation.z = -Math.PI * 0.12;
+            brace.castShadow = true;
+            worldGroup.add(brace);
+          }
         }
+        segIdx++;
       }
     } else {
-      const beamZ = new THREE.BoxGeometry(0.05, 0.05, STATE.tileSize);
+      let segIdx = 0;
       for (let z = z1; z <= z2; z += STATE.tileSize) {
         const post = new THREE.Mesh(fencePostGeo, fenceMat);
-        post.position.set(x1, 0.4, z);
+        post.position.set(x1, 0.47, z);
         post.castShadow = true;
+        post.receiveShadow = true;
         worldGroup.add(post);
+
+        const cap = new THREE.Mesh(fenceCapGeo, fenceAccentMat);
+        cap.rotation.y = Math.PI * 0.25;
+        cap.position.set(x1, 1.03, z);
+        cap.castShadow = true;
+        worldGroup.add(cap);
+
         if (z < z2) {
-          const beam = new THREE.Mesh(beamZ, fenceMat);
-          beam.position.set(x1, 0.6, z + STATE.tileSize/2);
-          worldGroup.add(beam);
+          const topRail = new THREE.Mesh(fenceRailGeoZ, fenceMat);
+          topRail.position.set(x1, 0.72, z + STATE.tileSize / 2);
+          topRail.castShadow = true;
+          worldGroup.add(topRail);
+
+          const midRail = new THREE.Mesh(fenceRailGeoZ, fenceMat);
+          midRail.position.set(x1, 0.5, z + STATE.tileSize / 2);
+          midRail.castShadow = true;
+          worldGroup.add(midRail);
+
+          const brace = new THREE.Mesh(fenceBraceGeoZ, fenceAccentMat);
+          brace.position.set(x1, 0.6, z + STATE.tileSize / 2);
+          brace.rotation.x = segIdx % 2 === 0 ? Math.PI * 0.12 : -Math.PI * 0.12;
+          brace.castShadow = true;
+          worldGroup.add(brace);
         }
+        segIdx++;
       }
     }
   }
@@ -616,6 +706,24 @@ async function init() {
   drawFenceRow(pStartX, pEndZ, pEndX, pEndZ, 'x');     // South
   drawFenceRow(pStartX, pStartZ, pStartX, pEndZ, 'z'); // West
   drawFenceRow(pEndX, pStartZ, pEndX, pEndZ, 'z');     // East
+
+  // Decorative gate on south side.
+  const gateGroup = new THREE.Group();
+  gateGroup.position.set(southGateCenterX, 0, pEndZ);
+  const gateFrame = new THREE.Mesh(new THREE.BoxGeometry(southGateWidth, 0.07, 0.09), fenceAccentMat);
+  gateFrame.position.set(0, 0.78, 0);
+  gateGroup.add(gateFrame);
+  const leftDoor = new THREE.Mesh(new THREE.BoxGeometry(southGateWidth * 0.45, 0.65, 0.07), fenceMat);
+  leftDoor.position.set(-southGateWidth * 0.25, 0.4, 0);
+  leftDoor.rotation.y = Math.PI * 0.08;
+  leftDoor.castShadow = true;
+  gateGroup.add(leftDoor);
+  const rightDoor = new THREE.Mesh(new THREE.BoxGeometry(southGateWidth * 0.45, 0.65, 0.07), fenceMat);
+  rightDoor.position.set(southGateWidth * 0.25, 0.4, 0);
+  rightDoor.rotation.y = -Math.PI * 0.08;
+  rightDoor.castShadow = true;
+  gateGroup.add(rightDoor);
+  worldGroup.add(gateGroup);
 
   // ====== SCATTERED ROCKS ======
   const rockGeo = new THREE.DodecahedronGeometry(0.3, 0);
@@ -885,10 +993,21 @@ async function init() {
     const velocity = new THREE.Vector3(0, 0, 0);
     
     if (!shopOpen) {
-      if (keys.w) velocity.z -= 1;
-      if (keys.s) velocity.z += 1;
-      if (keys.a) velocity.x -= 1;
-      if (keys.d) velocity.x += 1;
+      const inputX = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+      const inputY = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
+
+      if (inputX !== 0 || inputY !== 0) {
+        // Camera-relative movement so controls match on-screen direction.
+        const camForward = new THREE.Vector3();
+        camera.getWorldDirection(camForward);
+        camForward.y = 0;
+        if (camForward.lengthSq() > 0) camForward.normalize();
+
+        const camRight = new THREE.Vector3().crossVectors(camForward, new THREE.Vector3(0, 1, 0)).normalize();
+        velocity
+          .addScaledVector(camForward, inputY)
+          .addScaledVector(camRight, inputX);
+      }
     }
     
     if (velocity.length() > 0) {
@@ -963,14 +1082,16 @@ async function init() {
     const gridX = Math.round(intersectPoint.x / STATE.tileSize) * STATE.tileSize;
     const gridZ = Math.round(intersectPoint.z / STATE.tileSize) * STATE.tileSize;
     
-    lastGridX = gridX;
-    lastGridZ = gridZ;
     let lastTileKey = "";
-    if (lastGridX !== null && lastGridZ !== null) {
-        lastTileKey = `${lastGridX},${lastGridZ}`;
-    }
+    lastTileKey = `${gridX},${gridZ}`;
+    updateInteractionHint(lastTileKey);
 
     highlightMesh.position.set(gridX, 0.1, gridZ);
+
+    if (mouseInteractionRequested) {
+      handleInteraction(gridX, gridZ, scene);
+      mouseInteractionRequested = false;
+    }
     
     // Interaction System (Spacebar)
     if (keys.space && !spacePressedLast) {
@@ -991,9 +1112,9 @@ async function init() {
     cameraPan.z = THREE.MathUtils.clamp(cameraPan.z, -6, 6);
 
     const zoom = STATE.cameraZoom;
-    camera.position.x = playerMesh.position.x + cameraPan.x + (8 * zoom);
-    camera.position.z = playerMesh.position.z + cameraPan.z + (10 * zoom);
-    camera.position.y = 10 * zoom;
+    camera.position.x = playerMesh.position.x + cameraPan.x + (cameraFollowOffset.x * zoom);
+    camera.position.z = playerMesh.position.z + cameraPan.z + (cameraFollowOffset.z * zoom);
+    camera.position.y = cameraFollowOffset.y * zoom;
     camera.lookAt(
       playerMesh.position.x + cameraPan.x * 0.4,
       playerMesh.position.y,

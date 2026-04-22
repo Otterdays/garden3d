@@ -33,6 +33,7 @@ This document lists the gameplay and technical features currently present in Gar
 - Escape key modal closing
 - Hotbar tooltips/labels
 - Time fast-forward action (night skip)
+- Contextual interaction hint text that previews current tile action before interaction
 
 ### Entities and Systems
 - Procedural player model foundation
@@ -70,3 +71,18 @@ This document lists the gameplay and technical features currently present in Gar
 - Added perimeter wall treatment for clearer map edges.
 - Added decorative lantern rows at border lanes for visual depth.
 - Added hedge/rock edge blocker ring with soft collision pushback to make boundaries feel natural.
+
+## Feature Update (2026-04-22 - Interaction UX)
+
+### Interaction Feedback
+- Added a centered interaction hint panel above the hotbar (`#interaction-hint`) for beginner-friendly action previews.
+- Hint text updates in real time from current tile + selected tool state (plant, water, harvest, occupied, empty, out-of-resource).
+- Click interactions were aligned to current-frame targeting so feedback and outcomes no longer feel one step behind.
+
+### Roadmap Expansion Synced
+- Added new roadmap priorities for deeper progression loops:
+  - Tool durability and repair economy
+  - Soil fertility and crop rotation
+  - Daily/weekly quest board objectives
+  - Cooking with temporary buff effects
+  - Farm reputation progression

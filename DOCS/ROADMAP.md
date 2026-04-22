@@ -105,3 +105,37 @@ Focus: quality and shareability.
 1. Extract movement/camera/bounds logic into dedicated modules.
 2. Add configurable control mapping (rebind camera pan and interaction keys).
 3. Add edge-zone biome set dressing variation (forest, stones, flowers by quadrant).
+
+## Roadmap Expansion (2026-04-22 - Added)
+
+### New Systems to Add (Prioritized)
+1. **Tool Durability + Repair Loop**  
+   - Watering can, hoe, and harvest tool gain wear from use.  
+   - Repair at town workshop for gold/material sinks.  
+   - Adds mid-game decisions without overcomplicating the core loop.
+2. **Soil Fertility and Crop Rotation**  
+   - Repeated same-crop planting lowers yield over time on that tile.  
+   - Compost/fertilizer restores fertility and boosts growth speed.  
+   - Encourages planning and varied farm layouts.
+3. **Simple Quest Board (Daily/Weekly)**  
+   - Rotating requests: crop bundles, watering goals, harvest targets.  
+   - Rewards include gold, seeds, and small progression unlocks.  
+   - Keeps sessions goal-driven for new players.
+4. **Cooking + Buff Foods**  
+   - Convert harvest into meals that grant short boosts (speed, sell bonus, stamina-style utility).  
+   - Introduces value choices: sell raw crops or craft higher-value outcomes.
+5. **Farm Rating / Town Reputation**  
+   - Score based on crop variety, deliveries, and consistency.  
+   - Unlocks cosmetic upgrades and advanced shop inventory.
+
+### UX and Accessibility Upgrades (Beginner-Focused)
+- Contextual interaction hint near HUD (what Space/Click will do on hovered tile).
+- Optional "slow mode" for time progression and calmer onboarding sessions.
+- First-week guided checklist (plant, water, harvest, visit market, refill well).
+- Color-safe icon pass for crop/water/harvest states.
+- Optional larger UI scale preset for readability.
+
+### Technical Quality Targets
+- Introduce save/load snapshot format with backward-compatible version field.
+- Add lightweight telemetry counters in dev mode (actions/min, crop success rate).
+- Add `src/main.ts` decomposition milestones with "one system per file" target.

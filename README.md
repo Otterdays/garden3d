@@ -9,6 +9,7 @@ Before making changes, read `AGENTS.md`.
 - Version control policy is strict: stay on the pinned/specific version unless the user explicitly requests a version change.
 - Any version/update-flow change must include update modal updates.
 - Update modal changes must be reflected in docs in the same task.
+- Update log history must not be deleted or overwritten; preserve history and only edit entries in place or append new notes.
 
 ## Overview
 

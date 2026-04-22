@@ -21,6 +21,8 @@ This project should be maintained with beginner-friendly, game-dev-oriented chan
 - Any change to the update modal must be reflected in project docs in the same task.
 - Keep version labels/messages in the modal accurate and aligned with the actual pinned version.
 - Never leave update modal messaging stale after version-related edits.
+- The update log history must never be deleted, replaced wholesale, or overwritten.
+- Update log maintenance is edit-in-place or append-only, while preserving prior historical entries.
 
 ## Documentation Expectations
 
