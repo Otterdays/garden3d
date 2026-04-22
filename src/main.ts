@@ -1,5 +1,4 @@
 import * as THREE from 'three/webgpu';
-import { color, uv, time, positionLocal, vec3, sin, cos } from 'three/tsl';
 import { NPCManager } from './entities/NPCManager';
 
 // --- GAME STATE ---
@@ -19,9 +18,14 @@ const STATE = {
   gridUnits: 16,
   cameraZoom: 1.0
 };
+const APP_VERSION = '0.1.0';
 
 // Crop tracking: key = "x,z"
 const cropGrid = new Map<string, any>();
+let playerMeshRef: THREE.Group | null = null;
+const cameraPan = new THREE.Vector3(0, 0, 0);
+const worldBounds = { minX: -12, maxX: 12, minZ: -12, maxZ: 12 };
+const edgeBlockers: Array<{ x: number; z: number; radius: number }> = [];
 
 // Sound System (Web Audio API synthesis)
 const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -120,7 +124,10 @@ function toggleShop(playerPos?: THREE.Vector3) {
 }
 
 // Inputs
-const keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+const keys = {
+  w: false, a: false, s: false, d: false, space: false, shift: false,
+  arrowup: false, arrowdown: false, arrowleft: false, arrowright: false
+};
 const mouse = new THREE.Vector2();
 const raycaster = new THREE.Raycaster();
 
@@ -129,7 +136,7 @@ window.addEventListener('mousemove', e => {
   mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
 });
 
-window.addEventListener('mousedown', e => {
+window.addEventListener('mousedown', () => {
   if (shopOpen) return;
   // Interaction triggered by click
   handleMouseInteraction();
@@ -161,7 +168,7 @@ window.addEventListener('keyup', e => {
   if (e.key === '3') selectSlot(2);
   if (e.key === '4') selectSlot(3);
   
-  if (e.key === 'b') toggleShop(playerMesh.position);
+  if (e.key === 'b') toggleShop(playerMeshRef?.position);
   if (e.key === 'Escape' && shopOpen) toggleShop();
 });
 
@@ -243,7 +250,18 @@ function showChangelogModal() {
   header.appendChild(closeBtn);
 
   const content = document.createElement("div");
-  content.innerHTML = "<div style=\"color:rgba(255,255,255,0.8);font-size:1.1rem;line-height:1.8;margin-bottom:1.5rem;\"><h3 style=\"color:#a8ff78;margin:1.5rem 0 0.5rem 0;\">0.0.1 ALPHA</h3><ul style=\"list-style:none;padding:0;margin:0;\"><li style=\"padding:0.5rem 0;color:#ffd54f;\"><strong>+</strong> Added changelog modal UI component for version tracking</li><li style=\"padding:0.5rem 0;color:#ffd54f;\"><strong>+</strong> In-game update notification system</li><li style=\"padding:0.5rem 0;color:#ffd54f;\"><strong>+</strong> Update documentation with new features</li></ul></div>";
+  content.innerHTML = `<div style="color:rgba(255,255,255,0.82);font-size:1.02rem;line-height:1.8;margin-bottom:1.5rem;">
+    <h3 style="color:#a8ff78;margin:1.2rem 0 0.5rem 0;">v${APP_VERSION} - Movement + World Polish</h3>
+    <ul style="list-style:none;padding:0;margin:0;">
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Movement reliability improved and player stays in playable bounds</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Camera panning added with arrow keys while still following player</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Outer world edges upgraded with perimeter detail and soft blockers</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Documentation and update log synced with current build</li>
+    </ul>
+    <div style="margin-top:1rem;color:rgba(255,255,255,0.7);font-size:0.92rem;">
+      Controls: WASD move, Shift sprint, Arrow keys pan camera, Shift + Wheel zoom, 1-4 tools, Space interact, B shop.
+    </div>
+  </div>`;
 
   modal.appendChild(header);
   modal.appendChild(content);
@@ -257,7 +275,7 @@ function showChangelogModal() {
 }
 
 // Shop Binding
-document.getElementById('close-shop')?.addEventListener('click', toggleShop);
+document.getElementById('close-shop')?.addEventListener('click', () => toggleShop());
 document.querySelectorAll('.buy-btn').forEach(btn => {
   btn.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
@@ -349,6 +367,11 @@ async function init() {
   
   // Base Terrain Plane
   const mapSize = STATE.gridUnits * STATE.tileSize;
+  const mapHalfSize = mapSize * 0.5;
+  worldBounds.minX = -mapHalfSize + 1;
+  worldBounds.maxX = mapHalfSize - 1;
+  worldBounds.minZ = -mapHalfSize + 1;
+  worldBounds.maxZ = mapHalfSize - 1;
   const groundGeo = new THREE.PlaneGeometry(mapSize, mapSize);
   groundGeo.rotateX(-Math.PI / 2);
   const groundMat = new THREE.MeshStandardNodeMaterial({
@@ -695,9 +718,76 @@ async function init() {
     tree.position.set(tx, 0, tz);
     worldGroup.add(tree);
   }
+
+  // ====== OUTER BOUNDS DETAIL ======
+  // Low perimeter wall + lantern posts to make the map edge feel intentional.
+  const borderMat = new THREE.MeshStandardNodeMaterial({ color: 0x4e342e, roughness: 0.95 });
+  const wallThickness = 0.6;
+  const wallHeight = 0.9;
+  const northWall = new THREE.Mesh(new THREE.BoxGeometry(mapSize, wallHeight, wallThickness), borderMat);
+  northWall.position.set(0, wallHeight * 0.5 - 0.02, -mapHalfSize);
+  const southWall = new THREE.Mesh(new THREE.BoxGeometry(mapSize, wallHeight, wallThickness), borderMat);
+  southWall.position.set(0, wallHeight * 0.5 - 0.02, mapHalfSize);
+  const westWall = new THREE.Mesh(new THREE.BoxGeometry(wallThickness, wallHeight, mapSize), borderMat);
+  westWall.position.set(-mapHalfSize, wallHeight * 0.5 - 0.02, 0);
+  const eastWall = new THREE.Mesh(new THREE.BoxGeometry(wallThickness, wallHeight, mapSize), borderMat);
+  eastWall.position.set(mapHalfSize, wallHeight * 0.5 - 0.02, 0);
+  [northWall, southWall, westWall, eastWall].forEach((w) => {
+    w.castShadow = true;
+    w.receiveShadow = true;
+    worldGroup.add(w);
+  });
+
+  const lanternMat = new THREE.MeshStandardNodeMaterial({ color: 0xffc107, roughness: 0.3, metalness: 0.1 });
+  const lanternPostMat = new THREE.MeshStandardNodeMaterial({ color: 0x6d4c41, roughness: 0.9 });
+  for (let i = -1; i <= 1; i++) {
+    const offset = i * (mapSize * 0.3);
+    const post1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.6, 6), lanternPostMat);
+    post1.position.set(offset, 0.8, -mapHalfSize + 0.5);
+    const light1 = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), lanternMat);
+    light1.position.set(offset, 1.55, -mapHalfSize + 0.5);
+    const post2 = post1.clone();
+    post2.position.z = mapHalfSize - 0.5;
+    const light2 = light1.clone();
+    light2.position.z = mapHalfSize - 0.5;
+    [post1, light1, post2, light2].forEach((obj) => worldGroup.add(obj));
+  }
+
+  // Soft collision blockers near perimeter to make edges feel organic.
+  // Player can still move freely in-town but gets nudged away from dense edge clutter.
+  const hedgeMat = new THREE.MeshStandardNodeMaterial({ color: 0x2e7d32, roughness: 0.9 });
+  const borderRockMat = new THREE.MeshStandardNodeMaterial({ color: 0x757575, roughness: 0.95 });
+  const blockerRingRadius = mapHalfSize - 1.4;
+  const blockerCount = 42;
+  for (let i = 0; i < blockerCount; i++) {
+    const theta = (i / blockerCount) * Math.PI * 2;
+    const jitter = (Math.random() - 0.5) * 1.2;
+    const x = Math.cos(theta) * (blockerRingRadius + jitter);
+    const z = Math.sin(theta) * (blockerRingRadius + jitter);
+    const blockerRadius = 0.65 + Math.random() * 0.35;
+
+    if (Math.random() > 0.35) {
+      const hedge = new THREE.Mesh(new THREE.SphereGeometry(0.55 + Math.random() * 0.3, 8, 6), hedgeMat);
+      hedge.position.set(x, 0.35, z);
+      hedge.scale.y = 0.7 + Math.random() * 0.3;
+      hedge.castShadow = true;
+      hedge.receiveShadow = true;
+      worldGroup.add(hedge);
+    } else {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.45 + Math.random() * 0.25, 0), borderRockMat);
+      rock.position.set(x, 0.18, z);
+      rock.scale.y = 0.6 + Math.random() * 0.5;
+      rock.castShadow = true;
+      rock.receiveShadow = true;
+      worldGroup.add(rock);
+    }
+
+    edgeBlockers.push({ x, z, radius: blockerRadius });
+  }
   
   // --- PLAYER ENTITY ---
   const playerMesh = new THREE.Group();
+  playerMeshRef = playerMesh;
   playerMesh.position.set(0, 0, 2); // Start near plot
   
   // Amorphous skin material
@@ -804,6 +894,22 @@ async function init() {
     if (velocity.length() > 0) {
       velocity.normalize().multiplyScalar(moveSpeed * dt);
       playerMesh.position.add(velocity);
+      playerMesh.position.x = THREE.MathUtils.clamp(playerMesh.position.x, worldBounds.minX, worldBounds.maxX);
+      playerMesh.position.z = THREE.MathUtils.clamp(playerMesh.position.z, worldBounds.minZ, worldBounds.maxZ);
+
+      // Resolve soft collisions against edge blockers.
+      for (const blocker of edgeBlockers) {
+        const dx = playerMesh.position.x - blocker.x;
+        const dz = playerMesh.position.z - blocker.z;
+        const distSq = dx * dx + dz * dz;
+        const minDist = blocker.radius + 0.45;
+        if (distSq > 0 && distSq < minDist * minDist) {
+          const dist = Math.sqrt(distSq);
+          const push = minDist - dist;
+          playerMesh.position.x += (dx / dist) * push;
+          playerMesh.position.z += (dz / dist) * push;
+        }
+      }
       
       // Smooth Rotation LERP
       const targetAngle = Math.atan2(velocity.x, velocity.z);
@@ -876,11 +982,23 @@ async function init() {
     updateCrops(dt);
     
     // Camera follow player (isometric angle) with zoom
+    const camPanSpeed = 8 * dt;
+    if (keys.arrowup) cameraPan.z -= camPanSpeed;
+    if (keys.arrowdown) cameraPan.z += camPanSpeed;
+    if (keys.arrowleft) cameraPan.x -= camPanSpeed;
+    if (keys.arrowright) cameraPan.x += camPanSpeed;
+    cameraPan.x = THREE.MathUtils.clamp(cameraPan.x, -6, 6);
+    cameraPan.z = THREE.MathUtils.clamp(cameraPan.z, -6, 6);
+
     const zoom = STATE.cameraZoom;
-    camera.position.x = playerMesh.position.x + (8 * zoom);
-    camera.position.z = playerMesh.position.z + (10 * zoom);
+    camera.position.x = playerMesh.position.x + cameraPan.x + (8 * zoom);
+    camera.position.z = playerMesh.position.z + cameraPan.z + (10 * zoom);
     camera.position.y = 10 * zoom;
-    camera.lookAt(playerMesh.position);
+    camera.lookAt(
+      playerMesh.position.x + cameraPan.x * 0.4,
+      playerMesh.position.y,
+      playerMesh.position.z + cameraPan.z * 0.4
+    );
     
     // Sky/Light color shift based on time of day
     const hour = STATE.gameTime / 60;
@@ -955,7 +1073,8 @@ function handleInteraction(x: number, z: number, scene: THREE.Scene) {
   } else if (slotData.type === 'water') {
     // Well refill check
     const wellPos = new THREE.Vector3(-2, 0, -6);
-    const distToWell = playerMesh.position.distanceTo(wellPos);
+    if (!playerMeshRef) return;
+    const distToWell = playerMeshRef.position.distanceTo(wellPos);
     
     if (distToWell < 2.5) {
       slotData.qty = slotData.maxQty || 10;
@@ -1021,7 +1140,8 @@ function triggerErrorSlot() {
 }
 
 function updateCrops(dt: number) {
-  cropGrid.forEach((crop, key) => {
+  const now = performance.now();
+  cropGrid.forEach((crop) => {
     // Pop animation logic
     if (crop.popAnim < 1.0) {
       crop.popAnim = Math.min(1.0, crop.popAnim + dt * 5);

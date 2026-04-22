@@ -57,3 +57,16 @@ This document lists the gameplay and technical features currently present in Gar
 - Start in `src/main.ts` for current gameplay loop context.
 - Read `DOCS/ARCHITECTURE.md` and `DOCS/STYLE_GUIDE.md` before larger edits.
 - Keep feature work modular; avoid adding more global complexity to one file.
+
+## Feature Update (2026-04-22)
+
+### Movement and Camera
+- Player movement now includes stable world-bound clamping.
+- Camera now supports manual pan controls using arrow keys while still following player.
+- Camera pan amount is clamped to keep framing readable and prevent disorienting drift.
+- In-game update modal now includes current controls and recent movement/camera improvements.
+
+### Outer World Boundary
+- Added perimeter wall treatment for clearer map edges.
+- Added decorative lantern rows at border lanes for visual depth.
+- Added hedge/rock edge blocker ring with soft collision pushback to make boundaries feel natural.

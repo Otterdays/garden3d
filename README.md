@@ -2,6 +2,14 @@
 
 Garden3D is a cozy 3D gardening prototype built with Vite, Three.js (WebGPU), and TypeScript.
 
+## Contributor Rules (Required)
+
+Before making changes, read `AGENTS.md`.
+
+- Version control policy is strict: stay on the pinned/specific version unless the user explicitly requests a version change.
+- Any version/update-flow change must include update modal updates.
+- Update modal changes must be reflected in docs in the same task.
+
 ## Overview
 
 This project explores a relaxing, game-like sandbox where the player can plant, manage, and grow a small digital garden in a stylized 3D world.

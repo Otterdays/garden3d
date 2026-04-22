@@ -25,6 +25,13 @@ Focus: make the loop engaging over longer play sessions.
 - Add inventory depth (stacking, limits, clearer item feedback)
 - Add simple progression goals (daily targets, unlocks, milestones)
 
+### Farming Depth System
+- **Seasonal Crops**: Different crops available by season (summer corn/winter kale)
+- **Quality Tiers**: Normal → Silver → Gold → Iridium quality levels
+- **Cross-breeding**: Hybrid seed crafting experimental system
+- **Seed Saving**: Replant select crops to maintain variety
+- **Composting**: Convert harvest waste to fertilizer
+
 ## Phase 3 - World and NPC Expansion
 Focus: make the world feel alive.
 
@@ -32,6 +39,19 @@ Focus: make the world feel alive.
 - Add interaction prompts for NPC dialogue and simple requests
 - Expand map points of interest and biome variation
 - Improve environmental storytelling with props and ambient events
+
+### NPC Relationship System
+- **Gift-Giving**: Each NPC has favorite items (favorite flower/vegetable)
+- **Heart Events**: Unlock story moments at relationship milestones (2/4/6/8 hearts)
+- **Daily Schedules**: Villagers visit the well, sit at campfire, browse the market
+- **Requests**: Random tasks ("Can you bring me 5 carrots?")
+- **Move-in Events**: New neighbors can join the town
+
+### Community Building
+- **Community Center**: Bundle completion for upgrades (better tools, barn, coop)
+- **Festivals**: Seasonal celebrations (Spring Egg Hunt, Summer Luau, Winter Feast)
+- **Shipping Bin**: Auto-sell crops, track daily earnings
+- **Customer Shoppers**: Visiting NPCs buy from the market
 
 ## Phase 4 - Player Experience Polish
 Focus: smooth, friendly, and beginner-accessible experience.
@@ -41,6 +61,13 @@ Focus: smooth, friendly, and beginner-accessible experience.
 - Improve animation, sound layering, and camera feel
 - Add accessibility pass (readability, contrast, key rebinding planning)
 
+### Environmental Depth
+- **Weather System**: Rain feeds crops (2x growth), storms may damage unprotected plants
+- **Seasonal Visuals**: Foliage color shifts, snow in winter, flower blooms
+- **Wildlife**: Birds at feeders, butterflies near flowers, fishing minigame
+- **Bees & Pollination**: Place beehives near crops to increase yield
+- **Day/Night Zones**: Different NPCs appear at different times
+
 ## Phase 5 - Release Preparation
 Focus: quality and shareability.
 
@@ -48,6 +75,12 @@ Focus: quality and shareability.
 - Complete balancing pass for economy and progression
 - Add release notes and update changelog discipline
 - Prepare public repo essentials (license, contribution guide, issue templates)
+
+### Narrative & Exploration
+- **Joja Corporation**: Competing corporate store vs local town shop
+- **Secret Areas**: Unlock the forest mine, ruins exploration
+- **Artifact Hunting**: Dig for ancient tools and fossils
+- **Collections**: Museum donation rewards
 
 ## Success Criteria
 - Build passes with zero TypeScript errors
@@ -59,3 +92,16 @@ Focus: quality and shareability.
 1. Resolve current TypeScript build issues in `src/main.ts`.
 2. Extract one subsystem from `src/main.ts` (recommended: input or inventory handling).
 3. Add one new crop type with tuned economy values and document it.
+
+## Roadmap Update (2026-04-22)
+
+### Completed Since Last Revision
+- TypeScript build blockers in `src/main.ts` were resolved and production build passes.
+- Movement reliability improved with explicit world bounds clamping.
+- Camera control upgraded with arrow-key panning layered on top of player-follow behavior.
+- Outer map boundary was upgraded with perimeter detail and soft collision blockers.
+
+### Next Recommended Sprint
+1. Extract movement/camera/bounds logic into dedicated modules.
+2. Add configurable control mapping (rebind camera pan and interaction keys).
+3. Add edge-zone biome set dressing variation (forest, stones, flowers by quadrant).
