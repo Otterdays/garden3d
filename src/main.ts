@@ -18,7 +18,7 @@ const STATE = {
   gridUnits: 16,
   cameraZoom: 1.0
 };
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.0.1 ALPHA';
 
 // Crop tracking: key = "x,z"
 const cropGrid = new Map<string, any>();
@@ -243,12 +243,12 @@ function showChangelogModal() {
 
   const content = document.createElement("div");
   content.innerHTML = `<div style="color:rgba(255,255,255,0.82);font-size:1.02rem;line-height:1.8;margin-bottom:1.5rem;">
-    <h3 style="color:#a8ff78;margin:1.2rem 0 0.5rem 0;">v${APP_VERSION} - Movement + World Polish</h3>
+    <h3 style="color:#a8ff78;margin:1.2rem 0 0.5rem 0;">${APP_VERSION}</h3>
     <ul style="list-style:none;padding:0;margin:0;">
-      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Movement reliability improved and player stays in playable bounds</li>
-      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Camera panning added with arrow keys while still following player</li>
-      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Outer world edges upgraded with perimeter detail and soft blockers</li>
-      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Documentation and update log synced with current build</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Changelog modal for version tracking</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Auto-shows on game start with recent changes</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Roadmap systems: farming depth, NPC relationships, weather</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Documentation synced per AGENTS.md rules</li>
     </ul>
     <div style="margin-top:1rem;color:rgba(255,255,255,0.7);font-size:0.92rem;">
       Controls: WASD move, Shift sprint, Arrow keys pan camera, Shift + Wheel zoom, 1-4 tools, Space interact, B shop.
