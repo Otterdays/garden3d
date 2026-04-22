@@ -213,6 +213,49 @@ document.querySelectorAll('.slot').forEach((el, i) => {
   el.addEventListener('click', () => selectSlot(i));
 });
 
+// Changelog Modal System
+let changelogShown = false;
+function showChangelogModal() {
+  if (changelogShown) return;
+  changelogShown = true;
+
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);backdrop-filter:blur(8px);z-index:999;display:flex;place-items:center;";
+
+  const modal = document.createElement("div");
+  modal.style.cssText = "background:rgba(15,20,15,0.95);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:24px;padding:2.5rem;width:90%;max-width:600px;transform:translateY(0);transition:transform 0.4s cubic-bezier(0.175,0.885,0.32,1.275);";
+
+  const header = document.createElement("div");
+  header.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:1rem;";
+
+  const title = document.createElement("h2");
+  title.textContent = "Update Log";
+  title.style.cssText = "margin:0;color:#ffeb3b;font-size:2rem;";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.textContent = "×";
+  closeBtn.style.cssText = "background:none;border:none;color:white;font-size:1.5rem;cursor:pointer;opacity:0.6;transition:opacity 0.2s;";
+  closeBtn.addEventListener("mouseover", () => closeBtn.style.opacity = "1");
+  closeBtn.addEventListener("mouseout", () => closeBtn.style.opacity = "0.6");
+  closeBtn.addEventListener("click", () => { overlay.style.opacity = "0"; setTimeout(() => overlay.remove(), 300); });
+
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+
+  const content = document.createElement("div");
+  content.innerHTML = "<div style=\"color:rgba(255,255,255,0.8);font-size:1.1rem;line-height:1.8;margin-bottom:1.5rem;\"><h3 style=\"color:#a8ff78;margin:1.5rem 0 0.5rem 0;\">0.0.1 ALPHA</h3><ul style=\"list-style:none;padding:0;margin:0;\"><li style=\"padding:0.5rem 0;color:#ffd54f;\"><strong>+</strong> Added changelog modal UI component for version tracking</li><li style=\"padding:0.5rem 0;color:#ffd54f;\"><strong>+</strong> In-game update notification system</li><li style=\"padding:0.5rem 0;color:#ffd54f;\"><strong>+</strong> Update documentation with new features</li></ul></div>";
+
+  modal.appendChild(header);
+  modal.appendChild(content);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  requestAnimationFrame(() => {
+    modal.style.transform = "translateY(0)";
+    overlay.style.opacity = "1";
+  });
+}
+
 // Shop Binding
 document.getElementById('close-shop')?.addEventListener('click', toggleShop);
 document.querySelectorAll('.buy-btn').forEach(btn => {
@@ -1075,4 +1118,6 @@ function replaceMeshWithFullPlant(crop: any) {
   crop.mesh = group;
 }
 
-init().catch(console.error);
+init().then(() => {
+  setTimeout(showChangelogModal, 1500);
+}).catch(console.error);
