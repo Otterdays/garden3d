@@ -1,39 +1,29 @@
 ﻿import * as THREE from 'three/webgpu';
-import * as THREE from 'three/webgpu';
+import { AREA_LABELS, AREA_TRAVEL_BLURBS, AREA_TRAVEL_ORDER, type AreaId } from './config/areaConfig';
+import { APP_VERSION, HARVEST_SLOT_INDEX, HOTBAR_SLOT_COUNT } from './config/gameConstants';
+import { cropGrid, STATE } from './state/gameState';
+import { makeEmptySaveV1, type GameSaveV1, type SavedCropV1 } from './save/saveFormat';
+import {
+  applySaveToState,
+  buildGameSave,
+  clearSaveStorageOnly,
+  mergeImportedJson,
+  readSaveFromLocalStorage,
+  writeSaveToLocalStorage
+} from './save/persistence';
+import { setWorldBoundsForMap, type EdgeBlocker } from './config/worldConfig';
+import { updateFollowCamera } from './systems/followCamera';
+import { updatePlayerMovement } from './systems/playerMovement';
+import { devCountHarvest, devCountPlant, devCountWater } from './dev/devCounters';
 import { NPCManager } from './entities/NPCManager';
-import { BeehiveManager, POLLINATOR_CONFIG } from './entities/BeehiveManager';
+import { ensureCropBar, getBarYLocal, removeCropBar, updateAllCropBars3D } from './entities/cropProgressBar3D';
+import { buildAreas, type BuiltArea } from './world/areaBuilder';
 
-// --- GAME STATE ---
-const STATE = {
-  gold: 50,
-  activeSlot: 0,
-  inventory: [
-    { type: 'carrot', qty: 5, price: 10, growTime: 5 },
-    { type: 'flower', qty: 5, price: 25, growTime: 10 },
-    { type: 'water', qty: 10, maxQty: 10, price: 0, growTime: 0 },
-    { type: 'harvest', qty: Infinity, price: 0, growTime: 0 }
-  ],
-  day: 1,
-  gameTime: 8 * 60,
-  timeScale: 0.1,
-  tileSize: 1.5,
-  gridUnits: 16,
-  cameraZoom: 1.0
-};
-const APP_VERSION = '0.1.0';
-const STATE_HONEY = { count: 0 };
-const STATE_HONEY = { count: 0 };
-const STATE_HONEY = { count: 0 };
-
-// Crop tracking: key = "x,z"
-const cropGrid = new Map<string, any>();
-let beehiveManager: BeehiveManager | null = null;
-let activePlacementMode: 'beehive' | null = null;
 let playerMeshRef: THREE.Group | null = null;
 const cameraPan = new THREE.Vector3(0, 0, 0);
-const worldBounds = { minX: -12, maxX: 12, minZ: -12, maxZ: 12 };
-const edgeBlockers: Array<{ x: number; z: number; radius: number }> = [];
-const cameraFollowOffset = new THREE.Vector3(10, 10, 10); // true 45-degree isometric diagonal
+const edgeBlockers: EdgeBlocker[] = [];
+let activeArea: BuiltArea | null = null;
+let worldAreas: Record<AreaId, BuiltArea> | null = null;
 
 // Sound System (Web Audio API synthesis)
 const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -108,34 +98,172 @@ function showToast(message: string, type: 'success' | 'warning' | 'info' = 'info
   setTimeout(() => toast.remove(), 3000);
 }
 
-// Shop System
+// Shop + Data modals, pause, inventory
 let shopOpen = false;
+let dataModalOpen = false;
+let pauseMenuOpen = false;
+let pauseSettingsView = false;
+let inventoryOpen = false;
+
+function anyModalOpen() {
+  return shopOpen || dataModalOpen;
+}
+/** True while escape menu is up — world simulation stops. */
+function isWorldPaused() {
+  return pauseMenuOpen;
+}
+/** Block movement, camera pan, and tool wheel (not inventory alone). */
+function inputBlockedForMoveAndWheel() {
+  return anyModalOpen() || pauseMenuOpen;
+}
+/** Block world clicks / some UI (includes inventory to avoid mis-clicks on canvas). */
+function inputBlockedForCanvas() {
+  return anyModalOpen() || pauseMenuOpen || inventoryOpen;
+}
+function setDataModalOpen(open: boolean) {
+  dataModalOpen = open;
+  const modal = document.getElementById('data-modal');
+  if (open) {
+    if (pauseMenuOpen) setPauseMenuOpen(false);
+    if (inventoryOpen) setInventoryOpen(false);
+    modal?.classList.remove('hidden');
+    modal?.setAttribute('aria-hidden', 'false');
+  } else {
+    modal?.classList.add('hidden');
+    modal?.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function getNextAreaId(areaId: AreaId): AreaId {
+  const idx = AREA_TRAVEL_ORDER.indexOf(areaId);
+  return AREA_TRAVEL_ORDER[(idx + 1) % AREA_TRAVEL_ORDER.length];
+}
+
+function updateTravelUi(areaId: AreaId) {
+  const areaLabelEl = document.getElementById('area-label');
+  if (areaLabelEl) areaLabelEl.textContent = AREA_LABELS[areaId];
+
+  const travelBtn = document.getElementById('travel-btn');
+  if (travelBtn) {
+    travelBtn.textContent = `Travel: ${AREA_LABELS[getNextAreaId(areaId)]}`;
+  }
+}
+
+function isWithinFarmPlot(x: number, z: number): boolean {
+  const bounds = activeArea?.farmBounds;
+  if (!bounds) return false;
+  return x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ;
+}
+
+function isFarmPlotTile(tileKey: string): boolean {
+  const [rawX, rawZ] = tileKey.split(',');
+  return isWithinFarmPlot(Number(rawX), Number(rawZ));
+}
+
+function setPauseMenuOpen(open: boolean) {
+  pauseMenuOpen = open;
+  const modal = document.getElementById('pause-modal');
+  if (open) {
+    if (inventoryOpen) setInventoryOpen(false);
+    pauseSettingsView = false;
+    if (anyModalOpen()) {
+      if (dataModalOpen) setDataModalOpen(false);
+      if (shopOpen) toggleShop();
+    }
+    modal?.classList.remove('hidden');
+    modal?.setAttribute('aria-hidden', 'false');
+  } else {
+    modal?.classList.add('hidden');
+    modal?.setAttribute('aria-hidden', 'true');
+    pauseSettingsView = false;
+    clearHeldInputKeys();
+  }
+  syncPauseSubpanels();
+}
+function setPauseSettingsView(view: 'main' | 'settings') {
+  pauseSettingsView = view === 'settings';
+  syncPauseSubpanels();
+}
+function syncPauseSubpanels() {
+  const main = document.getElementById('pause-main');
+  const settings = document.getElementById('pause-settings');
+  if (!main || !settings) return;
+  const showSettings = pauseMenuOpen && pauseSettingsView;
+  main.classList.toggle('hidden', showSettings);
+  settings.classList.toggle('hidden', !showSettings);
+}
+function setInventoryOpen(open: boolean) {
+  inventoryOpen = open;
+  const p = document.getElementById('inventory-panel');
+  if (open) {
+    p?.classList.remove('hidden');
+  } else {
+    p?.classList.add('hidden');
+  }
+}
+function toggleInventory() {
+  if (pauseMenuOpen) return;
+  setInventoryOpen(!inventoryOpen);
+  playSound('click');
+  updateInventoryPanelContent();
+}
+function updateInventoryPanelContent() {
+  const g = document.getElementById('inv-gold');
+  const a = document.getElementById('inv-carrot');
+  const b = document.getElementById('inv-flower');
+  const c = document.getElementById('inv-tomato');
+  const w = document.getElementById('inv-water');
+  if (g) g.textContent = STATE.gold.toString();
+  if (a) a.textContent = STATE.inventory[0].qty.toString();
+  if (b) b.textContent = STATE.inventory[1].qty.toString();
+  if (c) c.textContent = STATE.inventory[2].qty.toString();
+  if (w) w.textContent = STATE.inventory[3].qty.toString();
+}
 function toggleShop(playerPos?: THREE.Vector3) {
   if (!shopOpen && playerPos) {
-    // Check distance to Market Stall at (3, 0, -6)
-    const stallPos = new THREE.Vector3(3, 0, -6);
-    if (playerPos.distanceTo(stallPos) > 4) {
+    const stallPos = activeArea?.marketPos;
+    if (!stallPos || playerPos.distanceTo(stallPos) > 4) {
       showToast("Must be near the Market Stall to trade!", "warning");
       return;
     }
   }
 
   shopOpen = !shopOpen;
+  if (shopOpen) {
+    if (pauseMenuOpen) setPauseMenuOpen(false);
+    if (inventoryOpen) setInventoryOpen(false);
+    if (dataModalOpen) setDataModalOpen(false);
+  }
   const modal = document.getElementById('shop-modal');
   if (shopOpen) {
     modal?.classList.remove('hidden');
+    modal?.setAttribute('aria-hidden', 'false');
     document.querySelector('.wallet-panel')?.classList.add('bump');
   } else {
     modal?.classList.add('hidden');
+    modal?.setAttribute('aria-hidden', 'true');
     document.querySelector('.wallet-panel')?.classList.remove('bump');
   }
 }
 
 // Inputs
 const keys = {
-  w: false, a: false, s: false, d: false, space: false, shift: false,
+  w: false, a: false, s: false, d: false, f: false, space: false, shift: false,
   arrowup: false, arrowdown: false, arrowleft: false, arrowright: false
 };
+function clearHeldInputKeys() {
+  keys.w = false;
+  keys.a = false;
+  keys.s = false;
+  keys.d = false;
+  keys.f = false;
+  keys.space = false;
+  keys.shift = false;
+  keys.arrowup = false;
+  keys.arrowdown = false;
+  keys.arrowleft = false;
+  keys.arrowright = false;
+}
 const mouse = new THREE.Vector2();
 const raycaster = new THREE.Raycaster();
 
@@ -144,8 +272,11 @@ window.addEventListener('mousemove', e => {
   mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
 });
 
-window.addEventListener('mousedown', () => {
-  if (shopOpen) return;
+// Only treat clicks on the 3D canvas as world actions — not hotbar / HUD (those use click + different target).
+const gameCanvasEl = document.getElementById('canvas');
+window.addEventListener('mousedown', (e) => {
+  if (inputBlockedForCanvas()) return;
+  if (e.target !== gameCanvasEl) return;
   // Queue click interaction so it resolves against the current frame's grid target.
   mouseInteractionRequested = true;
 });
@@ -166,43 +297,47 @@ window.addEventListener('keyup', e => {
   if (e.key === '2') selectSlot(1);
   if (e.key === '3') selectSlot(2);
   if (e.key === '4') selectSlot(3);
+  if (e.key === '5') selectSlot(4);
   
   if (e.key === 'b') toggleShop(playerMeshRef?.position);
-  if (e.key === 'Escape' && shopOpen) toggleShop();
-});
-
-// Scroll to cycle hotbar
-window.addEventListener('wheel', e => {
-  if (shopOpen) return;
-  let newSlot = STATE.activeSlot + (e.deltaY > 0 ? 1 : -1);
-  if (newSlot < 0) newSlot = 3;
-  if (newSlot > 3) newSlot = 0;
-  selectSlot(newSlot);
-});
-
-// Zoom support
-window.addEventListener('wheel', e => {
-  if (!shopOpen && !e.ctrlKey) {
-     // If not ctrl key, we use wheel for hotbar? 
-     // Usually wheel is for zoom in games. Let's swap them.
-     // Shift+Wheel for zoom? No, standard is Wheel for zoom.
-     // Let's use Wheel for zoom, and maybe numbers only for slots?
-     // Actually, let's stick to user-friendly: Wheel = Zoom, 1-4 = Slots.
-     // Or Wheel = Slots, Alt+Wheel = Zoom.
-     // Actually, most casual sims use Wheel for Hotbar. 
-     // Let's use e.shiftKey + Wheel for Zoom.
+  if (e.key === 'e' || e.key === 'E') {
+    toggleInventory();
   }
-}, { passive: false });
+  if (e.key === 'Escape') {
+    if (pauseSettingsView) {
+      setPauseSettingsView('main');
+      return;
+    }
+    if (inventoryOpen) {
+      setInventoryOpen(false);
+      return;
+    }
+    if (dataModalOpen) {
+      setDataModalOpen(false);
+      return;
+    }
+    if (shopOpen) {
+      toggleShop();
+      return;
+    }
+    if (pauseMenuOpen) {
+      setPauseMenuOpen(false);
+      return;
+    }
+    setPauseMenuOpen(true);
+  }
+});
 
-// Let's refine the wheel logic:
+// Wheel: default cycles hotbar; Shift+Wheel zooms the camera.
 window.addEventListener('wheel', e => {
-  if (shopOpen) return;
+  if (inputBlockedForMoveAndWheel()) return;
   if (e.shiftKey) {
     STATE.cameraZoom = Math.max(0.5, Math.min(2.0, STATE.cameraZoom + (e.deltaY * 0.001)));
   } else {
+    const last = HOTBAR_SLOT_COUNT - 1;
     let newSlot = STATE.activeSlot + (e.deltaY > 0 ? 1 : -1);
-    if (newSlot < 0) newSlot = 3;
-    if (newSlot > 3) newSlot = 0;
+    if (newSlot < 0) newSlot = last;
+    if (newSlot > last) newSlot = 0;
     selectSlot(newSlot);
   }
 });
@@ -254,11 +389,20 @@ function showChangelogModal() {
     <ul style="list-style:none;padding:0;margin:0;">
       <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Changelog modal for version tracking</li>
       <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Auto-shows on game start with recent changes</li>
-      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Roadmap systems: farming depth, NPC relationships, weather</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Farmstead overhaul: proper perimeter walls, cleaner land shaping, raised crop beds, orchard details</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> New travelable zone: <strong>Ironwood Reach</strong> with a ruined gate, overlook, shrine, and darker exploration vibe</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Top-corner <strong>Travel</strong> button swaps areas and now saves the current destination with your farm state</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> State split: <code>gameState.ts</code> / <code>saveFormat.ts</code> + localStorage autosave (~20s) &amp; rehydrate</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Camera &amp; walk logic in <code>src/systems/followCamera.ts</code> &amp; <code>playerMovement.ts</code></li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> <kbd>E</kbd> <strong>Backpack</strong> panel, <kbd>Esc</kbd> <strong>pause</strong> (Resume / Settings / Quit); time stops while paused</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Farm <strong>Data</strong> (💾): export / import <code>garden3d_save.json</code>, reset farm; modals block play like the market</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Neighbors: named villagers, POI wandering, proximity toasts, <kbd>F</kbd> talk prompt, speech bubbles, and focus rings</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Dev: <code>window.__garden3dStats</code> in dev build (plants / harvests / waters / saves)</li>
+      <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Roadmap: farming depth, NPC relationships, weather</li>
       <li style="padding:0.35rem 0;color:#ffd54f;"><strong>+</strong> Documentation synced per AGENTS.md rules</li>
     </ul>
     <div style="margin-top:1rem;color:rgba(255,255,255,0.7);font-size:0.92rem;">
-      Controls: WASD move, Shift sprint, Arrow keys pan camera, Shift + Wheel zoom, 1-4 tools, Space interact, B shop.
+      Controls: WASD move, Shift sprint, Arrow keys pan camera, Shift + Wheel zoom, 1-5 tools, Space interact, F talk, B shop, Travel button swaps zones.
     </div>
   </div>`;
 
@@ -277,9 +421,9 @@ function showChangelogModal() {
 document.getElementById('close-shop')?.addEventListener('click', () => toggleShop());
 document.querySelectorAll('.buy-btn').forEach(btn => {
   btn.addEventListener('click', (e) => {
-    const target = e.target as HTMLElement;
+    const target = e.currentTarget as HTMLElement;
     const type = target.dataset.type;
-    const price = parseInt(target.dataset.price || '0');
+    const price = parseInt(target.dataset.price || '0', 10);
     
     if (STATE.gold >= price) {
       STATE.gold -= price;
@@ -297,7 +441,7 @@ document.querySelectorAll('.buy-btn').forEach(btn => {
 
 // Time Skip Binding
 document.getElementById('ff-btn')?.addEventListener('click', () => {
-  if (!shopOpen) {
+  if (!inputBlockedForMoveAndWheel()) {
     STATE.gameTime = 6 * 60; // Skip to 6 AM
     STATE.day += 1;
     cropGrid.forEach(c => c.isWatered = false);
@@ -310,7 +454,8 @@ function updateUI() {
   document.getElementById('gold-display')!.innerText = STATE.gold.toString();
   document.getElementById('qty-carrot')!.innerText = STATE.inventory[0].qty.toString();
   document.getElementById('qty-flower')!.innerText = STATE.inventory[1].qty.toString();
-  document.getElementById('qty-water')!.innerText = STATE.inventory[2].qty.toString();
+  document.getElementById('qty-tomato')!.innerText = STATE.inventory[2].qty.toString();
+  document.getElementById('qty-water')!.innerText = STATE.inventory[3].qty.toString();
   
   const hours = Math.floor(STATE.gameTime / 60) % 24;
   const mins = Math.floor(STATE.gameTime % 60);
@@ -320,11 +465,30 @@ function updateUI() {
   
   document.getElementById('time-display')!.innerText = `${hDisplay}:${mDisplay} ${ampm}`;
   document.getElementById('day-display')!.innerText = `Day ${STATE.day}`;
+
+  const timePhaseEl = document.getElementById('time-phase');
+  if (timePhaseEl) {
+    const isDay = hours >= 6 && hours < 18;
+    timePhaseEl.textContent = isDay ? '☀️' : '🌙';
+    timePhaseEl.title = isDay ? 'Daytime' : 'Night';
+  }
+
+  document.querySelectorAll('.buy-btn').forEach((el) => {
+    const b = el as HTMLButtonElement;
+    const price = parseInt(b.dataset.price || '0', 10);
+    b.disabled = Number.isFinite(price) && STATE.gold < price;
+  });
+
+  if (inventoryOpen) updateInventoryPanelContent();
 }
 
 function buildInteractionHint(tileKey: string): string {
   const slotData = STATE.inventory[STATE.activeSlot];
   const crop = cropGrid.get(tileKey);
+
+  if (!activeArea?.allowsFarming) {
+    return `${activeArea?.label ?? 'This area'} is for exploring, not farming. Use Travel to get back to the farm.`;
+  }
 
   if (slotData.type === 'harvest') {
     if (!crop) return 'Harvest tool selected: no crop on this tile.';
@@ -340,6 +504,7 @@ function buildInteractionHint(tileKey: string): string {
   }
 
   if (crop) return 'Tile occupied. Switch tool or pick an empty tile to plant.';
+  if (!isFarmPlotTile(tileKey)) return 'Use the raised farm beds for planting. The old "plant anywhere" mess is dead.';
   if (slotData.qty <= 0) return `Out of ${slotData.type} seeds. Buy more at the market stall.`;
   return `Press Space or click to plant ${slotData.type}.`;
 }
@@ -350,7 +515,183 @@ function updateInteractionHint(tileKey: string) {
   hintEl.textContent = buildInteractionHint(tileKey);
 }
 
+const PLANT_UI_ICONS: Record<string, string> = { carrot: '🥕', flower: '🌸', tomato: '🍅' };
+const PLANT_UI_LABEL: Record<string, string> = { carrot: 'Carrot', flower: 'Flower', tomato: 'Tomato' };
+
+function formatGrowTimeRemaining(remainingGrowUnits: number, timeScale: number): string {
+  if (remainingGrowUnits <= 0) return '0s';
+  const realSec = remainingGrowUnits / Math.max(0.0001, timeScale);
+  if (!Number.isFinite(realSec)) return '—';
+  if (realSec < 60) return `${Math.max(0, Math.ceil(realSec))}s`;
+  const m = Math.floor(realSec / 60);
+  const s = Math.ceil(realSec % 60);
+  return `${m}m ${s}s`;
+}
+
+function updatePlantPanel(tileKey: string) {
+  const panel = document.getElementById('plant-panel');
+  if (!panel) return;
+
+  if (!activeArea?.allowsFarming || !cropGrid.has(tileKey)) {
+    panel.classList.add('hidden');
+    panel.classList.remove('plant-panel--ready', 'plant-panel--thirsty', 'plant-panel--growing');
+    return;
+  }
+
+  const crop = cropGrid.get(tileKey) as {
+    type: string;
+    timer: number;
+    growTime: number;
+    isWatered: boolean;
+    isReady: boolean;
+  };
+
+  panel.classList.remove('hidden', 'plant-panel--ready', 'plant-panel--thirsty', 'plant-panel--growing');
+
+  const iconEl = document.getElementById('plant-panel-icon');
+  const titleEl = document.getElementById('plant-panel-title');
+  const statusEl = document.getElementById('plant-panel-status');
+  const waterLabel = document.getElementById('plant-water-label');
+  const timerLabel = document.getElementById('plant-timer-label');
+  const fillEl = document.getElementById('plant-progress-fill') as HTMLDivElement | null;
+  const pctEl = document.getElementById('plant-progress-pct');
+  const barEl = document.getElementById('plant-progress-bar');
+
+  if (iconEl) iconEl.textContent = PLANT_UI_ICONS[crop.type] ?? '🌱';
+  if (titleEl) titleEl.textContent = PLANT_UI_LABEL[crop.type] ?? crop.type;
+  if (statusEl) {
+    statusEl.classList.remove('state-ready', 'state-thirsty', 'state-growing');
+  }
+
+  const growT = Math.max(0.0001, crop.growTime);
+  const progress = Math.min(1, crop.timer / growT);
+  const pct = Math.min(100, Math.floor(progress * 100));
+
+  if (crop.isReady) {
+    panel.classList.add('plant-panel--ready');
+    if (statusEl) {
+      statusEl.textContent = 'Ready to harvest';
+      statusEl.classList.add('state-ready');
+    }
+    if (waterLabel) waterLabel.textContent = '—';
+    if (timerLabel) timerLabel.textContent = 'Complete';
+    if (fillEl) {
+      fillEl.classList.remove('plant-growth__fill--paused');
+      fillEl.classList.add('plant-growth__fill--ready');
+      fillEl.style.width = '100%';
+    }
+    if (pctEl) pctEl.textContent = '100%';
+    if (barEl) {
+      barEl.setAttribute('aria-valuenow', '100');
+      barEl.classList.add('plant-growth__bar--dim-shine');
+    }
+    return;
+  }
+
+  if (fillEl) fillEl.classList.remove('plant-growth__fill--ready');
+
+  if (crop.isWatered) {
+    panel.classList.add('plant-panel--growing');
+    if (statusEl) {
+      statusEl.textContent = 'Growing';
+      statusEl.classList.add('state-growing');
+    }
+    if (waterLabel) waterLabel.textContent = 'Watered (today)';
+    const remain = Math.max(0, crop.growTime - crop.timer);
+    if (timerLabel) timerLabel.textContent = formatGrowTimeRemaining(remain, STATE.timeScale);
+    if (fillEl) {
+      fillEl.classList.remove('plant-growth__fill--paused');
+      fillEl.style.width = `${pct}%`;
+    }
+    if (barEl) barEl.classList.remove('plant-growth__bar--dim-shine');
+  } else {
+    panel.classList.add('plant-panel--thirsty');
+    if (statusEl) {
+      statusEl.textContent = 'Needs water to grow';
+      statusEl.classList.add('state-thirsty');
+    }
+    if (waterLabel) waterLabel.textContent = 'Soil is dry';
+    if (timerLabel) timerLabel.textContent = 'Paused until watered';
+    if (fillEl) {
+      fillEl.classList.add('plant-growth__fill--paused');
+      fillEl.style.width = `${pct}%`;
+    }
+    if (barEl) barEl.classList.add('plant-growth__bar--dim-shine');
+  }
+
+  if (pctEl) pctEl.textContent = `${pct}%`;
+  if (barEl) barEl.setAttribute('aria-valuenow', String(pct));
+}
+
+function rehydrateCropsFromSave(parent: THREE.Object3D, saved: SavedCropV1[]) {
+  cropGrid.clear();
+  for (const row of saved) {
+    const parts = row.key.split(',');
+    const x = parseFloat(parts[0] ?? '0');
+    const z = parseFloat(parts[1] ?? '0');
+    if (row.isReady) {
+      const mesh = createSeedMesh(row.type);
+      mesh.position.set(x, 0.2, z);
+      parent.add(mesh);
+      const crop: any = {
+        type: row.type,
+        timer: row.timer,
+        growTime: row.growTime,
+        price: row.price,
+        mesh,
+        isReady: true,
+        isWatered: row.isWatered,
+        popAnim: 1
+      };
+      cropGrid.set(row.key, crop);
+      replaceMeshWithFullPlant(crop);
+    } else {
+      const mesh = createSeedMesh(row.type);
+      mesh.position.set(x, 0.2, z);
+      const progress = row.growTime > 0 ? Math.min(1, row.timer / row.growTime) : 0;
+      const baseScale = 0.2 + progress * 0.8;
+      mesh.scale.setScalar(baseScale);
+      parent.add(mesh);
+      const c: any = {
+        type: row.type,
+        timer: row.timer,
+        growTime: row.growTime,
+        price: row.price,
+        mesh,
+        isReady: false,
+        isWatered: row.isWatered,
+        popAnim: 1.0
+      };
+      cropGrid.set(row.key, c);
+      ensureCropBar(c, false);
+    }
+  }
+}
+
+function writePersistedState(params: {
+  panX: number;
+  panZ: number;
+  playerX: number;
+  playerZ: number;
+  playerRotY: number;
+}) {
+  writeSaveToLocalStorage(
+    buildGameSave({
+      panX: params.panX,
+      panZ: params.panZ,
+      playerX: params.playerX,
+      playerZ: params.playerZ,
+      playerRotY: params.playerRotY
+    })
+  );
+}
+
 async function init() {
+  const verEl = document.getElementById('app-version');
+  if (verEl) verEl.textContent = `v${APP_VERSION}`;
+  const settingsVer = document.getElementById('settings-version');
+  if (settingsVer) settingsVer.textContent = `v${APP_VERSION}`;
+
   const canvas = document.querySelector('#canvas') as HTMLCanvasElement;
   const renderer = new THREE.WebGPURenderer({ 
     canvas, 
@@ -386,519 +727,14 @@ async function init() {
   sunLight.shadow.camera.bottom = -15;
   scene.add(sunLight);
   
-  // --- WORLD GENERATION: TOWNSHIP GRID ---
-  const worldGroup = new THREE.Group();
-  scene.add(worldGroup);
-  
-  // Base Terrain Plane
-  const mapSize = STATE.gridUnits * STATE.tileSize;
-  const mapHalfSize = mapSize * 0.5;
-  worldBounds.minX = -mapHalfSize + 1;
-  worldBounds.maxX = mapHalfSize - 1;
-  worldBounds.minZ = -mapHalfSize + 1;
-  worldBounds.maxZ = mapHalfSize - 1;
-  const groundGeo = new THREE.PlaneGeometry(mapSize, mapSize);
-  groundGeo.rotateX(-Math.PI / 2);
-  const groundMat = new THREE.MeshStandardNodeMaterial({
-    color: 0x335c24,
-    roughness: 0.9,
+  const areaRoot = new THREE.Group();
+  scene.add(areaRoot);
+  worldAreas = buildAreas(STATE.tileSize, STATE.gridUnits);
+  AREA_TRAVEL_ORDER.forEach((areaId) => {
+    const area = worldAreas![areaId];
+    area.root.visible = false;
+    areaRoot.add(area.root);
   });
-  const ground = new THREE.Mesh(groundGeo, groundMat);
-  ground.receiveShadow = true;
-  ground.position.y = -0.05;
-  worldGroup.add(ground);
-  
-  // House Building (Collision Object)
-  const houseGroup = new THREE.Group();
-  houseGroup.position.set(-4, 0, -4);
-  
-  const wallGeo = new THREE.BoxGeometry(4, 3, 4);
-  const wallMat = new THREE.MeshStandardNodeMaterial({ color: 0xe0e0e0, roughness: 0.8 });
-  const walls = new THREE.Mesh(wallGeo, wallMat);
-  walls.position.y = 1.5;
-  walls.castShadow = true;
-  walls.receiveShadow = true;
-  houseGroup.add(walls);
-  
-  const roofGeo = new THREE.ConeGeometry(3.5, 2, 4);
-  roofGeo.rotateY(Math.PI / 4);
-  const roofMat = new THREE.MeshStandardNodeMaterial({ color: 0x8d3e35, roughness: 0.9 });
-  const roof = new THREE.Mesh(roofGeo, roofMat);
-  roof.position.y = 4;
-  roof.castShadow = true;
-  houseGroup.add(roof);
-  
-  worldGroup.add(houseGroup);
-  
-  // The Walkable Farm Plot Box (Visual Marker)
-  const plotGeo = new THREE.BoxGeometry(STATE.tileSize * 6, 0.1, STATE.tileSize * 4);
-  const plotMat = new THREE.MeshStandardNodeMaterial({ color: 0x3a2311, roughness: 1.0 });
-  const plotMesh = new THREE.Mesh(plotGeo, plotMat);
-  plotMesh.position.set(3, -0.02, 2);
-  plotMesh.receiveShadow = true;
-  worldGroup.add(plotMesh);
-  
-  // --- ENVIRONMENT DECORATIONS ---
-
-  // Shared materials
-  const stoneMat = new THREE.MeshStandardNodeMaterial({ color: 0x9e9e9e, roughness: 0.95 });
-  const woodMat = new THREE.MeshStandardNodeMaterial({ color: 0x5d4037, roughness: 0.9 });
-  const darkWoodMat = new THREE.MeshStandardNodeMaterial({ color: 0x3e2723, roughness: 1.0 });
-  const leafGreenMat = new THREE.MeshStandardNodeMaterial({ color: 0x1b5e20, roughness: 0.8 });
-  const lightLeafMat = new THREE.MeshStandardNodeMaterial({ color: 0x2e7d32, roughness: 0.8 });
-  const waterMat = new THREE.MeshStandardNodeMaterial({ color: 0x1565c0, roughness: 0.2, metalness: 0.3 });
-  const dirtPathMat = new THREE.MeshStandardNodeMaterial({ color: 0x6d4c31, roughness: 1.0 });
-
-  // ====== DIRT PATH NETWORK ======
-  // Main path from house to farm
-  const pathGeo1 = new THREE.BoxGeometry(1.2, 0.02, 8);
-  const path1 = new THREE.Mesh(pathGeo1, dirtPathMat);
-  path1.position.set(-1, 0.0, -1);
-  path1.receiveShadow = true;
-  worldGroup.add(path1);
-
-  // Branch path to town square
-  const pathGeo2 = new THREE.BoxGeometry(8, 0.02, 1.2);
-  const path2 = new THREE.Mesh(pathGeo2, dirtPathMat);
-  path2.position.set(-1, 0.0, -5);
-  path2.receiveShadow = true;
-  worldGroup.add(path2);
-
-  // Path from town to pond
-  const pathGeo3 = new THREE.BoxGeometry(1.2, 0.02, 6);
-  const path3 = new THREE.Mesh(pathGeo3, dirtPathMat);
-  path3.position.set(-7, 0.0, -7);
-  path3.receiveShadow = true;
-  worldGroup.add(path3);
-
-  // ====== CAMPFIRE (Enhanced) ======
-  // Stone ring
-  for (let i = 0; i < 8; i++) {
-    const angle = (i / 8) * Math.PI * 2;
-    const stoneGeo = new THREE.SphereGeometry(0.15, 6, 4);
-    const stone = new THREE.Mesh(stoneGeo, stoneMat);
-    stone.position.set(1 + Math.cos(angle) * 0.6, 0.1, -4 + Math.sin(angle) * 0.6);
-    stone.scale.y = 0.6;
-    worldGroup.add(stone);
-  }
-  // Log seats
-  const logSeatGeo = new THREE.CylinderGeometry(0.15, 0.15, 1.2, 6);
-  const logSeat1 = new THREE.Mesh(logSeatGeo, darkWoodMat);
-  logSeat1.rotation.z = Math.PI / 2;
-  logSeat1.position.set(2.2, 0.2, -4);
-  logSeat1.castShadow = true;
-  worldGroup.add(logSeat1);
-  const logSeat2 = new THREE.Mesh(logSeatGeo, darkWoodMat);
-  logSeat2.rotation.z = Math.PI / 2;
-  logSeat2.rotation.y = Math.PI / 3;
-  logSeat2.position.set(0.5, 0.2, -3.2);
-  logSeat2.castShadow = true;
-  worldGroup.add(logSeat2);
-
-  // Actual fire emissive
-  const fireGeo = new THREE.DodecahedronGeometry(0.3);
-  const fireMat = new THREE.MeshBasicNodeMaterial({ color: 0xffa000 });
-  const fireMesh = new THREE.Mesh(fireGeo, fireMat);
-  fireMesh.position.set(1, 0.3, -4);
-  worldGroup.add(fireMesh);
-  const fireLight = new THREE.PointLight(0xff6600, 5, 12);
-  fireLight.position.set(1, 1.2, -4);
-  worldGroup.add(fireLight);
-
-  // ====== STONE WELL ======
-  const wellGroup = new THREE.Group();
-  wellGroup.position.set(-2, 0, -6);
-  // Base cylinder
-  const wellBaseGeo = new THREE.CylinderGeometry(0.8, 0.9, 0.8, 12);
-  const wellBase = new THREE.Mesh(wellBaseGeo, stoneMat);
-  wellBase.position.y = 0.4;
-  wellBase.castShadow = true;
-  wellGroup.add(wellBase);
-  // Inner water
-  const wellWaterGeo = new THREE.CylinderGeometry(0.6, 0.6, 0.1, 12);
-  const wellWater = new THREE.Mesh(wellWaterGeo, waterMat);
-  wellWater.position.y = 0.7;
-  wellGroup.add(wellWater);
-  // Supports
-  const wellPostGeo = new THREE.CylinderGeometry(0.06, 0.06, 1.5, 6);
-  const wellPost1 = new THREE.Mesh(wellPostGeo, woodMat);
-  wellPost1.position.set(-0.6, 1.2, 0);
-  wellPost1.castShadow = true;
-  wellGroup.add(wellPost1);
-  const wellPost2 = new THREE.Mesh(wellPostGeo, woodMat);
-  wellPost2.position.set(0.6, 1.2, 0);
-  wellPost2.castShadow = true;
-  wellGroup.add(wellPost2);
-  // Roof beam
-  const wellRoofGeo = new THREE.BoxGeometry(1.6, 0.08, 0.5);
-  const wellRoof = new THREE.Mesh(wellRoofGeo, woodMat);
-  wellRoof.position.y = 1.95;
-  wellGroup.add(wellRoof);
-  worldGroup.add(wellGroup);
-
-  // ====== MARKET STALL ======
-  const marketGroup = new THREE.Group();
-  marketGroup.position.set(3, 0, -6);
-  // Counter
-  const counterGeo = new THREE.BoxGeometry(3, 1, 1.2);
-  const counterMat = new THREE.MeshStandardNodeMaterial({ color: 0x795548, roughness: 0.8 });
-  const counter = new THREE.Mesh(counterGeo, counterMat);
-  counter.position.y = 0.5;
-  counter.castShadow = true;
-  counter.receiveShadow = true;
-  marketGroup.add(counter);
-  // Awning posts
-  const awningPostGeo = new THREE.CylinderGeometry(0.06, 0.06, 2.5, 6);
-  [-1.4, 1.4].forEach(xOff => {
-    const post = new THREE.Mesh(awningPostGeo, woodMat);
-    post.position.set(xOff, 1.25, -0.5);
-    post.castShadow = true;
-    marketGroup.add(post);
-  });
-  // Awning (cloth)
-  const awningGeo = new THREE.BoxGeometry(3.2, 0.05, 1.8);
-  const awningMat = new THREE.MeshStandardNodeMaterial({ color: 0xc62828, roughness: 0.8 });
-  const awning = new THREE.Mesh(awningGeo, awningMat);
-  awning.position.set(0, 2.5, -0.2);
-  awning.rotation.x = -0.15;
-  awning.castShadow = true;
-  marketGroup.add(awning);
-  // Goods on counter (boxes)
-  const crateGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
-  const crateMat = new THREE.MeshStandardNodeMaterial({ color: 0xa1887f, roughness: 0.9 });
-  [-0.8, 0, 0.8].forEach(xOff => {
-    const crate = new THREE.Mesh(crateGeo, crateMat);
-    crate.position.set(xOff, 1.2, 0);
-    crate.rotation.y = Math.random() * 0.5;
-    crate.castShadow = true;
-    marketGroup.add(crate);
-  });
-  worldGroup.add(marketGroup);
-
-  // ====== POND & DOCK ======
-  const pondGeo = new THREE.CylinderGeometry(3, 3.5, 0.15, 24);
-  const pond = new THREE.Mesh(pondGeo, waterMat);
-  pond.position.set(-7, -0.02, -10);
-  pond.receiveShadow = true;
-  worldGroup.add(pond);
-  // Dock planks
-  const dockGroup = new THREE.Group();
-  const plankGeo = new THREE.BoxGeometry(1.2, 0.08, 0.25);
-  for (let i = 0; i < 6; i++) {
-    const plank = new THREE.Mesh(plankGeo, woodMat);
-    plank.position.set(-5.5, 0.08, -10 + i * 0.3 - 0.75);
-    plank.castShadow = true;
-    dockGroup.add(plank);
-  }
-  // Dock supports
-  const dockLegGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.4, 6);
-  [[-5.0, -10.6], [-5.0, -9.4], [-6.0, -10.6], [-6.0, -9.4]].forEach(([dx, dz]) => {
-    const leg = new THREE.Mesh(dockLegGeo, darkWoodMat);
-    leg.position.set(dx, -0.1, dz);
-    dockGroup.add(leg);
-  });
-  worldGroup.add(dockGroup);
-
-  // ====== FULL PERIMETER FENCING (Farm) ======
-  const fencePostGeo = new THREE.BoxGeometry(0.14, 0.95, 0.14);
-  const fenceCapGeo = new THREE.ConeGeometry(0.11, 0.12, 4);
-  const fenceRailGeoX = new THREE.BoxGeometry(STATE.tileSize, 0.06, 0.06);
-  const fenceRailGeoZ = new THREE.BoxGeometry(0.06, 0.06, STATE.tileSize);
-  const fenceBraceGeoX = new THREE.BoxGeometry(STATE.tileSize * 0.9, 0.04, 0.04);
-  const fenceBraceGeoZ = new THREE.BoxGeometry(0.04, 0.04, STATE.tileSize * 0.9);
-  const fenceMat = new THREE.MeshStandardNodeMaterial({ color: 0x6d4c41, roughness: 0.9 });
-  const fenceAccentMat = new THREE.MeshStandardNodeMaterial({ color: 0x4e342e, roughness: 0.95 });
-  const pStartX = 3 - (STATE.tileSize * 3);
-  const pEndX = 3 + (STATE.tileSize * 3);
-  const pStartZ = 2 - (STATE.tileSize * 2);
-  const pEndZ = 2 + (STATE.tileSize * 2);
-  const southGateCenterX = 3;
-  const southGateWidth = STATE.tileSize * 1.4;
-  const southGateMinX = southGateCenterX - southGateWidth * 0.5;
-  const southGateMaxX = southGateCenterX + southGateWidth * 0.5;
-
-  // Helper to draw a detailed fence row.
-  function drawFenceRow(x1: number, z1: number, x2: number, z2: number, axis: 'x' | 'z') {
-    if (axis === 'x') {
-      let segIdx = 0;
-      for (let x = x1; x <= x2; x += STATE.tileSize) {
-        const gateRow = Math.abs(z1 - pEndZ) < 0.001;
-        const postIsInGate = gateRow && x > southGateMinX && x < southGateMaxX;
-        if (postIsInGate) continue;
-
-        const post = new THREE.Mesh(fencePostGeo, fenceMat);
-        post.position.set(x, 0.47, z1);
-        post.castShadow = true;
-        post.receiveShadow = true;
-        worldGroup.add(post);
-
-        const cap = new THREE.Mesh(fenceCapGeo, fenceAccentMat);
-        cap.rotation.y = Math.PI * 0.25;
-        cap.position.set(x, 1.03, z1);
-        cap.castShadow = true;
-        worldGroup.add(cap);
-
-        if (x < x2) {
-          const nextX = x + STATE.tileSize;
-          const nextIsInGate = gateRow && nextX > southGateMinX && nextX < southGateMaxX;
-          const spanCrossesGate = gateRow && (x < southGateMaxX && nextX > southGateMinX);
-          if (nextIsInGate || spanCrossesGate) {
-            segIdx++;
-            continue;
-          }
-
-          const topRail = new THREE.Mesh(fenceRailGeoX, fenceMat);
-          topRail.position.set(x + STATE.tileSize / 2, 0.72, z1);
-          topRail.castShadow = true;
-          worldGroup.add(topRail);
-
-          const midRail = new THREE.Mesh(fenceRailGeoX, fenceMat);
-          midRail.position.set(x + STATE.tileSize / 2, 0.5, z1);
-          midRail.castShadow = true;
-          worldGroup.add(midRail);
-
-          if (segIdx % 2 === 0) {
-            const brace = new THREE.Mesh(fenceBraceGeoX, fenceAccentMat);
-            brace.position.set(x + STATE.tileSize / 2, 0.6, z1);
-            brace.rotation.z = Math.PI * 0.12;
-            brace.castShadow = true;
-            worldGroup.add(brace);
-          } else {
-            const brace = new THREE.Mesh(fenceBraceGeoX, fenceAccentMat);
-            brace.position.set(x + STATE.tileSize / 2, 0.6, z1);
-            brace.rotation.z = -Math.PI * 0.12;
-            brace.castShadow = true;
-            worldGroup.add(brace);
-          }
-        }
-        segIdx++;
-      }
-    } else {
-      let segIdx = 0;
-      for (let z = z1; z <= z2; z += STATE.tileSize) {
-        const post = new THREE.Mesh(fencePostGeo, fenceMat);
-        post.position.set(x1, 0.47, z);
-        post.castShadow = true;
-        post.receiveShadow = true;
-        worldGroup.add(post);
-
-        const cap = new THREE.Mesh(fenceCapGeo, fenceAccentMat);
-        cap.rotation.y = Math.PI * 0.25;
-        cap.position.set(x1, 1.03, z);
-        cap.castShadow = true;
-        worldGroup.add(cap);
-
-        if (z < z2) {
-          const topRail = new THREE.Mesh(fenceRailGeoZ, fenceMat);
-          topRail.position.set(x1, 0.72, z + STATE.tileSize / 2);
-          topRail.castShadow = true;
-          worldGroup.add(topRail);
-
-          const midRail = new THREE.Mesh(fenceRailGeoZ, fenceMat);
-          midRail.position.set(x1, 0.5, z + STATE.tileSize / 2);
-          midRail.castShadow = true;
-          worldGroup.add(midRail);
-
-          const brace = new THREE.Mesh(fenceBraceGeoZ, fenceAccentMat);
-          brace.position.set(x1, 0.6, z + STATE.tileSize / 2);
-          brace.rotation.x = segIdx % 2 === 0 ? Math.PI * 0.12 : -Math.PI * 0.12;
-          brace.castShadow = true;
-          worldGroup.add(brace);
-        }
-        segIdx++;
-      }
-    }
-  }
-  drawFenceRow(pStartX, pStartZ, pEndX, pStartZ, 'x'); // North
-  drawFenceRow(pStartX, pEndZ, pEndX, pEndZ, 'x');     // South
-  drawFenceRow(pStartX, pStartZ, pStartX, pEndZ, 'z'); // West
-  drawFenceRow(pEndX, pStartZ, pEndX, pEndZ, 'z');     // East
-
-  // Decorative gate on south side.
-  const gateGroup = new THREE.Group();
-  gateGroup.position.set(southGateCenterX, 0, pEndZ);
-  const gateFrame = new THREE.Mesh(new THREE.BoxGeometry(southGateWidth, 0.07, 0.09), fenceAccentMat);
-  gateFrame.position.set(0, 0.78, 0);
-  gateGroup.add(gateFrame);
-  const leftDoor = new THREE.Mesh(new THREE.BoxGeometry(southGateWidth * 0.45, 0.65, 0.07), fenceMat);
-  leftDoor.position.set(-southGateWidth * 0.25, 0.4, 0);
-  leftDoor.rotation.y = Math.PI * 0.08;
-  leftDoor.castShadow = true;
-  gateGroup.add(leftDoor);
-  const rightDoor = new THREE.Mesh(new THREE.BoxGeometry(southGateWidth * 0.45, 0.65, 0.07), fenceMat);
-  rightDoor.position.set(southGateWidth * 0.25, 0.4, 0);
-  rightDoor.rotation.y = -Math.PI * 0.08;
-  rightDoor.castShadow = true;
-  gateGroup.add(rightDoor);
-  worldGroup.add(gateGroup);
-
-  // ====== SCATTERED ROCKS ======
-  const rockGeo = new THREE.DodecahedronGeometry(0.3, 0);
-  for (let i = 0; i < 25; i++) {
-    const rock = new THREE.Mesh(rockGeo, stoneMat);
-    const rx = (Math.random() - 0.5) * 20;
-    const rz = (Math.random() - 0.5) * 20;
-    if (rx > pStartX - 1 && rx < pEndX + 1 && rz > pStartZ - 1 && rz < pEndZ + 1) continue;
-    rock.position.set(rx, 0.05, rz);
-    rock.scale.set(0.5 + Math.random(), 0.3 + Math.random() * 0.4, 0.5 + Math.random());
-    rock.rotation.y = Math.random() * Math.PI;
-    rock.castShadow = true;
-    worldGroup.add(rock);
-  }
-
-  // ====== WILDFLOWERS ======
-  const flowerColors = [0xff4081, 0xffeb3b, 0x7c4dff, 0x00e5ff, 0xff6e40];
-  for (let i = 0; i < 60; i++) {
-    const fx = (Math.random() - 0.5) * 24;
-    const fz = (Math.random() - 0.5) * 24;
-    if (fx > -7 && fx < 10 && fz > -2 && fz < 6) continue; // skip farm zone
-    const petalGeo = new THREE.SphereGeometry(0.08, 6, 4);
-    const petalMat = new THREE.MeshStandardNodeMaterial({
-      color: flowerColors[Math.floor(Math.random() * flowerColors.length)],
-      roughness: 0.6
-    });
-    const flower = new THREE.Mesh(petalGeo, petalMat);
-    flower.position.set(fx, 0.1, fz);
-    worldGroup.add(flower);
-    // Stem
-    const stemGeo = new THREE.CylinderGeometry(0.01, 0.01, 0.12, 4);
-    const stemMat = new THREE.MeshStandardNodeMaterial({ color: 0x388e3c, roughness: 0.8 });
-    const stem = new THREE.Mesh(stemGeo, stemMat);
-    stem.position.set(fx, 0.04, fz);
-    worldGroup.add(stem);
-  }
-
-  // ====== BUSHES ======
-  const bushGeo = new THREE.SphereGeometry(0.5, 8, 6);
-  for (let i = 0; i < 20; i++) {
-    const bx = (Math.random() - 0.5) * 22;
-    const bz = (Math.random() - 0.5) * 22;
-    if (bx > -7 && bx < 10 && bz > -2 && bz < 6) continue;
-    const mat = Math.random() > 0.5 ? leafGreenMat : lightLeafMat;
-    const bush = new THREE.Mesh(bushGeo, mat);
-    bush.position.set(bx, 0.25, bz);
-    bush.scale.set(0.6 + Math.random() * 0.8, 0.5 + Math.random() * 0.4, 0.6 + Math.random() * 0.8);
-    bush.castShadow = true;
-    worldGroup.add(bush);
-  }
-
-  // ====== LOG PILE (near house) ======
-  const logGeo = new THREE.CylinderGeometry(0.1, 0.1, 1.0, 6);
-  for (let row = 0; row < 3; row++) {
-    for (let col = 0; col < 4 - row; col++) {
-      const log = new THREE.Mesh(logGeo, darkWoodMat);
-      log.rotation.z = Math.PI / 2;
-      log.position.set(-6.5 + col * 0.22 + row * 0.11, 0.12 + row * 0.21, -3);
-      log.castShadow = true;
-      worldGroup.add(log);
-    }
-  }
-
-  // ====== MAILBOX (by house) ======
-  const mailPostGeo = new THREE.CylinderGeometry(0.04, 0.04, 1, 6);
-  const mailPost = new THREE.Mesh(mailPostGeo, woodMat);
-  mailPost.position.set(-2.5, 0.5, -3);
-  mailPost.castShadow = true;
-  worldGroup.add(mailPost);
-  const mailBoxGeo = new THREE.BoxGeometry(0.3, 0.2, 0.2);
-  const mailBoxMat = new THREE.MeshStandardNodeMaterial({ color: 0x1565c0, roughness: 0.6 });
-  const mailBox = new THREE.Mesh(mailBoxGeo, mailBoxMat);
-  mailBox.position.set(-2.5, 1.05, -3);
-  mailBox.castShadow = true;
-  worldGroup.add(mailBox);
-
-  // ====== DENSE TREE RING (Forest Boundary) ======
-  const treeGeo = new THREE.ConeGeometry(1.2, 3, 5);
-  const trunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 1);
-
-  for (let i = 0; i < 80; i++) {
-    const r = 12 + Math.random() * 10;
-    const theta = Math.random() * Math.PI * 2;
-    const tx = Math.cos(theta) * r;
-    const tz = Math.sin(theta) * r;
-
-    const tree = new THREE.Group();
-    const scale = 0.7 + Math.random() * 0.8;
-    const trunk = new THREE.Mesh(trunkGeo, darkWoodMat);
-    trunk.position.y = 0.5 * scale;
-    trunk.scale.setScalar(scale);
-    trunk.castShadow = true;
-    const leafMat = Math.random() > 0.3 ? leafGreenMat : lightLeafMat;
-    const leaves = new THREE.Mesh(treeGeo, leafMat);
-    leaves.position.y = 2.5 * scale;
-    leaves.scale.setScalar(scale);
-    leaves.castShadow = true;
-    tree.add(trunk);
-    tree.add(leaves);
-    tree.position.set(tx, 0, tz);
-    worldGroup.add(tree);
-  }
-
-  // ====== OUTER BOUNDS DETAIL ======
-  // Low perimeter wall + lantern posts to make the map edge feel intentional.
-  const borderMat = new THREE.MeshStandardNodeMaterial({ color: 0x4e342e, roughness: 0.95 });
-  const wallThickness = 0.6;
-  const wallHeight = 0.9;
-  const northWall = new THREE.Mesh(new THREE.BoxGeometry(mapSize, wallHeight, wallThickness), borderMat);
-  northWall.position.set(0, wallHeight * 0.5 - 0.02, -mapHalfSize);
-  const southWall = new THREE.Mesh(new THREE.BoxGeometry(mapSize, wallHeight, wallThickness), borderMat);
-  southWall.position.set(0, wallHeight * 0.5 - 0.02, mapHalfSize);
-  const westWall = new THREE.Mesh(new THREE.BoxGeometry(wallThickness, wallHeight, mapSize), borderMat);
-  westWall.position.set(-mapHalfSize, wallHeight * 0.5 - 0.02, 0);
-  const eastWall = new THREE.Mesh(new THREE.BoxGeometry(wallThickness, wallHeight, mapSize), borderMat);
-  eastWall.position.set(mapHalfSize, wallHeight * 0.5 - 0.02, 0);
-  [northWall, southWall, westWall, eastWall].forEach((w) => {
-    w.castShadow = true;
-    w.receiveShadow = true;
-    worldGroup.add(w);
-  });
-
-  const lanternMat = new THREE.MeshStandardNodeMaterial({ color: 0xffc107, roughness: 0.3, metalness: 0.1 });
-  const lanternPostMat = new THREE.MeshStandardNodeMaterial({ color: 0x6d4c41, roughness: 0.9 });
-  for (let i = -1; i <= 1; i++) {
-    const offset = i * (mapSize * 0.3);
-    const post1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.6, 6), lanternPostMat);
-    post1.position.set(offset, 0.8, -mapHalfSize + 0.5);
-    const light1 = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), lanternMat);
-    light1.position.set(offset, 1.55, -mapHalfSize + 0.5);
-    const post2 = post1.clone();
-    post2.position.z = mapHalfSize - 0.5;
-    const light2 = light1.clone();
-    light2.position.z = mapHalfSize - 0.5;
-    [post1, light1, post2, light2].forEach((obj) => worldGroup.add(obj));
-  }
-
-  // Soft collision blockers near perimeter to make edges feel organic.
-  // Player can still move freely in-town but gets nudged away from dense edge clutter.
-  const hedgeMat = new THREE.MeshStandardNodeMaterial({ color: 0x2e7d32, roughness: 0.9 });
-  const borderRockMat = new THREE.MeshStandardNodeMaterial({ color: 0x757575, roughness: 0.95 });
-  const blockerRingRadius = mapHalfSize - 1.4;
-  const blockerCount = 42;
-  for (let i = 0; i < blockerCount; i++) {
-    const theta = (i / blockerCount) * Math.PI * 2;
-    const jitter = (Math.random() - 0.5) * 1.2;
-    const x = Math.cos(theta) * (blockerRingRadius + jitter);
-    const z = Math.sin(theta) * (blockerRingRadius + jitter);
-    const blockerRadius = 0.65 + Math.random() * 0.35;
-
-    if (Math.random() > 0.35) {
-      const hedge = new THREE.Mesh(new THREE.SphereGeometry(0.55 + Math.random() * 0.3, 8, 6), hedgeMat);
-      hedge.position.set(x, 0.35, z);
-      hedge.scale.y = 0.7 + Math.random() * 0.3;
-      hedge.castShadow = true;
-      hedge.receiveShadow = true;
-      worldGroup.add(hedge);
-    } else {
-      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.45 + Math.random() * 0.25, 0), borderRockMat);
-      rock.position.set(x, 0.18, z);
-      rock.scale.y = 0.6 + Math.random() * 0.5;
-      rock.castShadow = true;
-      rock.receiveShadow = true;
-      worldGroup.add(rock);
-    }
-
-    edgeBlockers.push({ x, z, radius: blockerRadius });
-  }
   
   // --- PLAYER ENTITY ---
   const playerMesh = new THREE.Group();
@@ -971,15 +807,175 @@ async function init() {
   });
   
   const npcManager = new NPCManager(scene);
+
+  const setArea = (areaId: AreaId, options?: { preservePlayerPosition?: boolean; silent?: boolean }) => {
+    if (!worldAreas) return;
+    AREA_TRAVEL_ORDER.forEach((id) => {
+      worldAreas![id].root.visible = id === areaId;
+    });
+
+    activeArea = worldAreas[areaId];
+    STATE.currentArea = areaId;
+    updateTravelUi(areaId);
+
+    setWorldBoundsForMap(activeArea.mapHalfSize, 1.1);
+    edgeBlockers.length = 0;
+    edgeBlockers.push(...activeArea.edgeBlockers);
+
+    if (!options?.preservePlayerPosition) {
+      playerMesh.position.set(activeArea.spawn.x, 0, activeArea.spawn.z);
+      playerMesh.rotation.y = activeArea.spawn.rotY;
+      cameraPan.set(0, 0, 0);
+    }
+
+    if (!options?.silent) {
+      showToast(AREA_TRAVEL_BLURBS[areaId], 'info');
+    }
+  };
+
+  updateTravelUi(STATE.currentArea);
+  document.getElementById('travel-btn')?.addEventListener('click', () => {
+    playSound('click');
+    setArea(getNextAreaId(STATE.currentArea));
+  });
+
+  const loadResult = readSaveFromLocalStorage();
+  if (loadResult) {
+    const base = makeEmptySaveV1();
+    const data: GameSaveV1 = {
+      ...base,
+      ...loadResult,
+      crops: loadResult.crops ?? [],
+      inventoryQty:
+        loadResult.inventoryQty && loadResult.inventoryQty.length >= 4
+          ? loadResult.inventoryQty
+          : base.inventoryQty
+    };
+    applySaveToState(data);
+    playerMesh.position.set(
+      typeof data.playerX === 'number' ? data.playerX : 0,
+      0,
+      typeof data.playerZ === 'number' ? data.playerZ : 2
+    );
+    playerMesh.rotation.y = typeof data.playerRotY === 'number' ? data.playerRotY : 0;
+    cameraPan.set(
+      typeof data.panX === 'number' ? data.panX : 0,
+      0,
+      typeof data.panZ === 'number' ? data.panZ : 0
+    );
+    rehydrateCropsFromSave(worldAreas!.farmstead.cropRoot, data.crops);
+    selectSlot(STATE.activeSlot);
+    setArea(STATE.currentArea, { preservePlayerPosition: true, silent: true });
+  } else {
+    setArea(STATE.currentArea, { preservePlayerPosition: false, silent: true });
+    selectSlot(STATE.activeSlot);
+  }
+
+  let lastAutoSave = performance.now();
+  window.addEventListener('beforeunload', () => {
+    writePersistedState({
+      panX: cameraPan.x,
+      panZ: cameraPan.z,
+      playerX: playerMesh.position.x,
+      playerZ: playerMesh.position.z,
+      playerRotY: playerMesh.rotation.y
+    });
+  });
+
+  document.getElementById('open-data-btn')?.addEventListener('click', () => {
+    if (shopOpen) toggleShop();
+    if (inventoryOpen) setInventoryOpen(false);
+    setDataModalOpen(true);
+  });
+
+  document.getElementById('pause-resume-btn')?.addEventListener('click', () => {
+    playSound('click');
+    setPauseMenuOpen(false);
+  });
+  document.getElementById('pause-settings-btn')?.addEventListener('click', () => {
+    playSound('click');
+    setPauseSettingsView('settings');
+  });
+  document.getElementById('pause-back-btn')?.addEventListener('click', () => {
+    playSound('click');
+    setPauseSettingsView('main');
+  });
+  document.getElementById('pause-quit-btn')?.addEventListener('click', () => {
+    playSound('click');
+    if (!confirm('Leave the game? You can close the tab or try to exit the window.')) return;
+    try {
+      window.open('', '_self');
+      window.close();
+    } catch { /* pass */ }
+    setTimeout(() => {
+      showToast('Close the browser tab to exit, or return with Resume.', 'info');
+    }, 200);
+  });
+  document.getElementById('close-inventory')?.addEventListener('click', () => {
+    setInventoryOpen(false);
+    playSound('click');
+  });
+  document.getElementById('close-data')?.addEventListener('click', () => setDataModalOpen(false));
+  document.getElementById('export-save-btn')?.addEventListener('click', () => {
+    const json = JSON.stringify(
+      buildGameSave({
+        panX: cameraPan.x,
+        panZ: cameraPan.z,
+        playerX: playerMesh.position.x,
+        playerZ: playerMesh.position.z,
+        playerRotY: playerMesh.rotation.y
+      }),
+      null,
+      2
+    );
+    const blob = new Blob([json], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'garden3d_save.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('Save file downloaded.', 'success');
+  });
+  const importInput = document.getElementById('import-save-file') as HTMLInputElement | null;
+  importInput?.addEventListener('change', () => {
+    const f = importInput.files?.[0];
+    if (!f) return;
+    void f.text().then(t => {
+      const merged = mergeImportedJson(t);
+      if (!merged) {
+        showToast('Invalid or incompatible save file.', 'warning');
+        importInput.value = '';
+        return;
+      }
+      writeSaveToLocalStorage(merged);
+      showToast('Save imported. Reloading…', 'info');
+      setTimeout(() => location.reload(), 450);
+    });
+  });
+  document.getElementById('reset-farm-btn')?.addEventListener('click', () => {
+    if (!confirm('Reset the farm? This deletes your local save and reloads. This cannot be undone.')) {
+      return;
+    }
+    clearSaveStorageOnly();
+    showToast('Save cleared. Reloading…', 'info');
+    setTimeout(() => location.reload(), 300);
+  });
   
   // Game Loop Variables
   let lastTime = performance.now();
   let spacePressedLast = false;
+  let talkPressedLast = false;
   
   renderer.setAnimationLoop(() => {
     const now = performance.now();
     const dt = (now - lastTime) / 1000;
     lastTime = now;
+
+    if (isWorldPaused()) {
+      updateUI();
+      renderer.render(scene, camera);
+      return;
+    }
     
     // Core Clock Tick
     STATE.gameTime += dt * STATE.timeScale * 60;
@@ -992,93 +988,23 @@ async function init() {
     }
     
     // Update Isolated Systems
-    npcManager.update(dt, now);
+    npcManager.update(dt, now, {
+      playerPos: playerMesh.position,
+      onBark: (line) => showToast(line, 'info'),
+      gameTime: STATE.gameTime
+    });
     
-    // Player Movement (WASD) with smooth logic
-    const baseSpeed = 4.0;
-    const moveSpeed = keys.shift ? baseSpeed * 1.8 : baseSpeed;
-    const velocity = new THREE.Vector3(0, 0, 0);
-    
-    if (!shopOpen) {
-      const inputX = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
-      const inputY = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
-
-      if (inputX !== 0 || inputY !== 0) {
-        // Camera-relative movement so controls match on-screen direction.
-        const camForward = new THREE.Vector3();
-        camera.getWorldDirection(camForward);
-        camForward.y = 0;
-        if (camForward.lengthSq() > 0) camForward.normalize();
-
-        const camRight = new THREE.Vector3().crossVectors(camForward, new THREE.Vector3(0, 1, 0)).normalize();
-        velocity
-          .addScaledVector(camForward, inputY)
-          .addScaledVector(camRight, inputX);
-      }
-    }
-    
-    if (velocity.length() > 0) {
-      velocity.normalize().multiplyScalar(moveSpeed * dt);
-      playerMesh.position.add(velocity);
-      playerMesh.position.x = THREE.MathUtils.clamp(playerMesh.position.x, worldBounds.minX, worldBounds.maxX);
-      playerMesh.position.z = THREE.MathUtils.clamp(playerMesh.position.z, worldBounds.minZ, worldBounds.maxZ);
-
-      // Resolve soft collisions against edge blockers.
-      for (const blocker of edgeBlockers) {
-        const dx = playerMesh.position.x - blocker.x;
-        const dz = playerMesh.position.z - blocker.z;
-        const distSq = dx * dx + dz * dz;
-        const minDist = blocker.radius + 0.45;
-        if (distSq > 0 && distSq < minDist * minDist) {
-          const dist = Math.sqrt(distSq);
-          const push = minDist - dist;
-          playerMesh.position.x += (dx / dist) * push;
-          playerMesh.position.z += (dz / dist) * push;
-        }
-      }
-      
-      // Smooth Rotation LERP
-      const targetAngle = Math.atan2(velocity.x, velocity.z);
-      // Math to find shortest rotation path
-      let diff = targetAngle - playerMesh.rotation.y;
-      while(diff < -Math.PI) diff += Math.PI * 2;
-      while(diff > Math.PI) diff -= Math.PI * 2;
-      playerMesh.rotation.y += diff * 10 * dt;
-      
-      // Walking Bob Animation
-      playerMesh.position.y = Math.abs(Math.sin(now * 0.015)) * 0.2;
-      
-      // Swing arms and legs
-      const swing = Math.sin(now * 0.015);
-      leftArm.rotation.x = swing;
-      rightArm.rotation.x = -swing;
-      leftLeg.rotation.x = -swing;
-      rightLeg.rotation.x = swing;
-
-      // Footstep sound
-      if (Math.abs(swing) > 0.95) {
-          // Play subtle thud
-          const now = audioCtx.currentTime;
-          const osc = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
-          osc.connect(gain);
-          gain.connect(audioCtx.destination);
-          osc.frequency.setValueAtTime(60, now);
-          gain.gain.setValueAtTime(0.02, now);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
-          osc.start(now);
-          osc.stop(now + 0.05);
-      }
-    } else {
-      // Settle to ground
-      playerMesh.position.y = THREE.MathUtils.lerp(playerMesh.position.y, 0.0, 10 * dt);
-      
-      // Reset limbs
-      leftArm.rotation.x = THREE.MathUtils.lerp(leftArm.rotation.x, 0, 10 * dt);
-      rightArm.rotation.x = THREE.MathUtils.lerp(rightArm.rotation.x, 0, 10 * dt);
-      leftLeg.rotation.x = THREE.MathUtils.lerp(leftLeg.rotation.x, 0, 10 * dt);
-      rightLeg.rotation.x = THREE.MathUtils.lerp(rightLeg.rotation.x, 0, 10 * dt);
-    }
+    updatePlayerMovement(
+      playerMesh,
+      camera,
+      { w: keys.w, a: keys.a, s: keys.s, d: keys.d, shift: keys.shift },
+      inputBlockedForMoveAndWheel(),
+      edgeBlockers,
+      { leftArm, rightArm, leftLeg, rightLeg },
+      dt,
+      now,
+      audioCtx
+    );
     
     // Determine Grid Snapping via Mouse Raycast
     raycaster.setFromCamera(mouse, camera);
@@ -1091,41 +1017,62 @@ async function init() {
     
     let lastTileKey = "";
     lastTileKey = `${gridX},${gridZ}`;
-    updateInteractionHint(lastTileKey);
+    const npcPrompt = npcManager.getInteractionPrompt(playerMesh.position);
+    if (npcPrompt) {
+      const hintEl = document.getElementById('interaction-hint');
+      if (hintEl) hintEl.textContent = npcPrompt;
+    } else {
+      updateInteractionHint(lastTileKey);
+    }
 
     highlightMesh.position.set(gridX, 0.1, gridZ);
 
     if (mouseInteractionRequested) {
-      handleInteraction(gridX, gridZ, scene);
+      handleInteraction(gridX, gridZ, worldAreas!.farmstead.cropRoot);
       mouseInteractionRequested = false;
     }
     
     // Interaction System (Spacebar)
     if (keys.space && !spacePressedLast) {
-      handleInteraction(gridX, gridZ, scene);
+      handleInteraction(gridX, gridZ, worldAreas!.farmstead.cropRoot);
     }
     spacePressedLast = keys.space;
+    if (keys.f && !talkPressedLast && !inputBlockedForCanvas()) {
+      npcManager.interactNearest(playerMesh.position, STATE.gameTime, now, (line) => showToast(line, 'info'));
+    }
+    talkPressedLast = keys.f;
     
     // Crop Update Loop
     updateCrops(dt);
-    
-    // Camera follow player (isometric angle) with zoom
-    const camPanSpeed = 8 * dt;
-    if (keys.arrowup) cameraPan.z -= camPanSpeed;
-    if (keys.arrowdown) cameraPan.z += camPanSpeed;
-    if (keys.arrowleft) cameraPan.x -= camPanSpeed;
-    if (keys.arrowright) cameraPan.x += camPanSpeed;
-    cameraPan.x = THREE.MathUtils.clamp(cameraPan.x, -6, 6);
-    cameraPan.z = THREE.MathUtils.clamp(cameraPan.z, -6, 6);
+    updateAllCropBars3D(cropGrid, camera, now);
+    updatePlantPanel(lastTileKey);
 
-    const zoom = STATE.cameraZoom;
-    camera.position.x = playerMesh.position.x + cameraPan.x + (cameraFollowOffset.x * zoom);
-    camera.position.z = playerMesh.position.z + cameraPan.z + (cameraFollowOffset.z * zoom);
-    camera.position.y = cameraFollowOffset.y * zoom;
-    camera.lookAt(
-      playerMesh.position.x + cameraPan.x * 0.4,
-      playerMesh.position.y,
-      playerMesh.position.z + cameraPan.z * 0.4
+    const hlMat = highlightMesh.material as THREE.LineBasicMaterial;
+    if (!activeArea?.allowsFarming) {
+      hlMat.color.setHex(0x90a4ae);
+    } else if (cropGrid.has(lastTileKey)) {
+      const hc = cropGrid.get(lastTileKey) as { isReady: boolean; isWatered: boolean };
+      if (hc.isReady) hlMat.color.setHex(0x66bb6a);
+      else if (!hc.isWatered) hlMat.color.setHex(0xffb74d);
+      else hlMat.color.setHex(0xffee58);
+    } else if (!isFarmPlotTile(lastTileKey)) {
+      hlMat.color.setHex(0x8d6e63);
+    } else {
+      hlMat.color.setHex(0xffff00);
+    }
+
+    updateFollowCamera(
+      camera,
+      playerMesh.position,
+      cameraPan,
+      {
+        arrowup: keys.arrowup,
+        arrowdown: keys.arrowdown,
+        arrowleft: keys.arrowleft,
+        arrowright: keys.arrowright
+      },
+      dt,
+      STATE.cameraZoom
     );
     
     // Sky/Light color shift based on time of day
@@ -1141,11 +1088,6 @@ async function init() {
       sunLight.color.setHex(0xffffff); // Day white
     }
     
-    // Fire flicker animation
-    fireMesh.rotation.y += dt * 3;
-    fireMesh.scale.setScalar(0.8 + Math.sin(now * 0.01) * 0.3);
-    fireLight.intensity = 4 + Math.sin(now * 0.02) * 2 + Math.sin(now * 0.05) * 1;
-    
     // UI: FF Button Visibility
     const ffBtn = document.getElementById('ff-btn');
     if (ffBtn) {
@@ -1154,21 +1096,33 @@ async function init() {
     }
 
     // Auto-switch Harvest tool logic
-    if (cropGrid.has(lastTileKey)) {
+    if (activeArea?.allowsFarming && cropGrid.has(lastTileKey)) {
         const crop = cropGrid.get(lastTileKey);
         if (crop.isReady) {
-            document.querySelector('.slot[data-slot="3"]')?.classList.add('active-tip');
-            // Auto-switch logic (only if not already on slot 3)
-            if (STATE.activeSlot !== 3) {
-                const now = performance.now();
-                if (!crop.lastAutoSwitch || now - crop.lastAutoSwitch > 2000) {
-                     selectSlot(3);
-                     crop.lastAutoSwitch = now;
+            document.querySelector(`.slot[data-slot="${HARVEST_SLOT_INDEX}"]`)?.classList.add('active-tip');
+            if (STATE.activeSlot !== HARVEST_SLOT_INDEX) {
+                const autoNow = performance.now();
+                if (!crop.lastAutoSwitch || autoNow - crop.lastAutoSwitch > 2000) {
+                     selectSlot(HARVEST_SLOT_INDEX);
+                     crop.lastAutoSwitch = autoNow;
                 }
             }
         } else {
-            document.querySelector('.slot[data-slot="3"]')?.classList.remove('active-tip');
+            document.querySelector(`.slot[data-slot="${HARVEST_SLOT_INDEX}"]`)?.classList.remove('active-tip');
         }
+    } else {
+        document.querySelector(`.slot[data-slot="${HARVEST_SLOT_INDEX}"]`)?.classList.remove('active-tip');
+    }
+
+    if (now - lastAutoSave > 20000) {
+      lastAutoSave = now;
+      writePersistedState({
+        panX: cameraPan.x,
+        panZ: cameraPan.z,
+        playerX: playerMesh.position.x,
+        playerZ: playerMesh.position.z,
+        playerRotY: playerMesh.rotation.y
+      });
     }
 
     updateUI();
@@ -1177,20 +1131,27 @@ async function init() {
 }
 
 // --- FARMING LOGIC ---
-function handleInteraction(x: number, z: number, scene: THREE.Scene) {
+function handleInteraction(x: number, z: number, cropParent: THREE.Object3D) {
   const tileKey = `${x},${z}`;
   const slotData = STATE.inventory[STATE.activeSlot];
-  
+
+  if (!activeArea?.allowsFarming) {
+    showToast(`${activeArea?.label ?? 'This area'} is for scouting. Travel back to the farm to plant.`, 'info');
+    return;
+  }
+
   if (slotData.type === 'harvest') {
     // Attempt harvest
     if (cropGrid.has(tileKey)) {
       const crop = cropGrid.get(tileKey);
       if (crop.isReady) {
-        scene.remove(crop.mesh);
+        removeCropBar(crop);
+        crop.mesh.removeFromParent();
         cropGrid.delete(tileKey);
         
         const payout = crop.price;
         STATE.gold += payout;
+        devCountHarvest();
         showToast(`Harvested ${crop.type}! <b>+${payout} G</b>`, 'success');
         document.querySelector('.wallet-panel')?.classList.add('bump');
         setTimeout(() => document.querySelector('.wallet-panel')?.classList.remove('bump'), 200);
@@ -1200,11 +1161,11 @@ function handleInteraction(x: number, z: number, scene: THREE.Scene) {
     }
   } else if (slotData.type === 'water') {
     // Well refill check
-    const wellPos = new THREE.Vector3(-2, 0, -6);
+    const wellPos = activeArea?.wellPos;
     if (!playerMeshRef) return;
-    const distToWell = playerMeshRef.position.distanceTo(wellPos);
-    
-    if (distToWell < 2.5) {
+    const distToWell = wellPos ? playerMeshRef.position.distanceTo(wellPos) : Infinity;
+
+    if (wellPos && distToWell < 2.5) {
       slotData.qty = slotData.maxQty || 10;
       showToast(`Refilled Watering Can!`, 'success');
     } else {
@@ -1215,6 +1176,7 @@ function handleInteraction(x: number, z: number, scene: THREE.Scene) {
           if (!crop.isWatered) {
             slotData.qty -= 1;
             crop.isWatered = true;
+            devCountWater();
             showToast(`Watered the ${crop.type}!`, 'info');
           } else {
             showToast(`Already watered today.`, 'info');
@@ -1229,14 +1191,19 @@ function handleInteraction(x: number, z: number, scene: THREE.Scene) {
     // Attempt plant
     if (slotData.qty > 0) {
       if (!cropGrid.has(tileKey)) {
+        if (!isWithinFarmPlot(x, z)) {
+          triggerErrorSlot();
+          showToast('Plant inside the farm beds. The old free-for-all field layout is gone.', 'warning');
+          return;
+        }
         slotData.qty -= 1;
         
-        const mesh = createSeedMesh();
+        const mesh = createSeedMesh(slotData.type);
         mesh.position.set(x, 0.2, z);
         mesh.scale.setScalar(0.1); 
-        scene.add(mesh);
+        cropParent.add(mesh);
         
-        cropGrid.set(tileKey, {
+        const newCrop: any = {
           type: slotData.type,
           timer: 0,
           growTime: slotData.growTime,
@@ -1244,8 +1211,11 @@ function handleInteraction(x: number, z: number, scene: THREE.Scene) {
           mesh: mesh,
           isReady: false,
           isWatered: false,
-          popAnim: 0 
-        });
+          popAnim: 0
+        };
+        cropGrid.set(tileKey, newCrop);
+        ensureCropBar(newCrop, false);
+        devCountPlant();
         showToast(`Planted ${slotData.type}!`, 'info');
       } else {
         triggerErrorSlot();
@@ -1310,9 +1280,14 @@ function updateCrops(dt: number) {
   });
 }
 
-function createSeedMesh() {
+function createSeedMesh(plantType: string) {
   const geo = new THREE.SphereGeometry(0.2, 8, 8);
-  const mat = new THREE.MeshStandardNodeMaterial({ color: 0x8d5524 });
+  const colors: Record<string, number> = {
+    carrot: 0x8d5524,
+    flower: 0xce93d8,
+    tomato: 0xc62828
+  };
+  const mat = new THREE.MeshStandardNodeMaterial({ color: colors[plantType] ?? 0x8d5524 });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
   return mesh;
@@ -1320,8 +1295,16 @@ function createSeedMesh() {
 
 function replaceMeshWithFullPlant(crop: any) {
   const pos = crop.mesh.position.clone();
-  crop.mesh.parent?.remove(crop.mesh); // Remove seed
-  
+  const oldMesh = crop.mesh;
+  const parent = oldMesh.parent;
+  const bar = crop.progressBar3d;
+  if (bar) {
+    bar.root.removeFromParent();
+  }
+  if (parent) {
+    parent.remove(oldMesh);
+  }
+
   const group = new THREE.Group();
   group.position.copy(pos);
   
@@ -1355,15 +1338,33 @@ function replaceMeshWithFullPlant(crop: any) {
     const head = new THREE.Mesh(headGeo, headMat);
     head.position.y = 0.8;
     group.add(head);
+  } else if (crop.type === 'tomato') {
+    const stemGeo = new THREE.CylinderGeometry(0.08, 0.1, 0.5);
+    const stemMat = new THREE.MeshStandardNodeMaterial({ color: 0x33691e });
+    const stem = new THREE.Mesh(stemGeo, stemMat);
+    stem.position.y = 0.3;
+    group.add(stem);
+    const fruitMat = new THREE.MeshStandardNodeMaterial({ color: 0xd32f2f });
+    for (let i = 0; i < 3; i++) {
+      const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), fruitMat);
+      const a = (i / 3) * Math.PI * 2;
+      fruit.position.set(Math.cos(a) * 0.22, 0.55 + i * 0.06, Math.sin(a) * 0.22);
+      fruit.castShadow = true;
+      group.add(fruit);
+    }
   }
   
-  window.dispatchEvent(new Event('resize')); 
-  const parent = crop.mesh.parent;
-  if(parent) {
-      parent.remove(crop.mesh);
-      parent.add(group);
+  window.dispatchEvent(new Event('resize'));
+  if (parent) {
+    parent.add(group);
   }
   crop.mesh = group;
+  if (bar) {
+    group.add(bar.root);
+    bar.root.position.set(0, getBarYLocal(true, crop.type), 0);
+  } else {
+    ensureCropBar(crop, true);
+  }
 }
 
 init().then(() => {

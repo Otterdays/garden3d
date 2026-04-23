@@ -9,6 +9,7 @@ The game is a client-side web application built with Vite and Three.js.
 
 ## Interaction Layer
 - Simple mouse/touch events for planting and gardening actions.
+- [2026-04-22] **Movement / camera** split: `src/systems/playerMovement.ts` (WASD, sprint, edge blockers) and `src/systems/followCamera.ts` (arrow pan, zoomed follow). **Persistence:** `src/save/persistence.ts` + `localStorage` (`saveFormat` v1) — not a server; full state client-side.
 
 ```mermaid
 graph TD

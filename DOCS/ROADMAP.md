@@ -4,17 +4,25 @@
 ## Goal
 Build Garden3D from a playable prototype into a polished, cozy gardening game with clear progression, stable systems, and clean architecture.
 
+## Roadmap execution (2026-04-22)
+- **Stabilize / Phase 1:** `BeehiveManager` animation bug fixed (`timeMs` passed into bee buzz motion). `npm run build` and `npx tsc --noEmit` are clean.
+- **Modularity:** `STATE` and `cropGrid` moved to `src/state/gameState.ts`; shared version/slot indices in `src/config/gameConstants.ts`.
+- **Save format stub:** `src/save/saveFormat.ts` defines `SAVE_FORMAT_VERSION` and a V1 snapshot shape (persistence UI still future work).
+- **Gameplay:** New **tomato** crop (shop + hotbar), five-slot tool row (1–5 keys, wheel wrap). In-game update modal and `DOCS/SMOKE_TEST.md` updated.
+- **Input / UX (2026-04-22):** **`E`** opens a **Backpack** panel (read-only view of gold + seed/water counts). **`Esc`** opens a **pause** overlay: **Resume**, **Settings** (version + data pointers, **Back** to main pause), **Quit** (confirm). While paused, simulation and movement stop; `Esc` on the pause screen resumes. Styling shared with shop/data modals; `#pause-modal` uses a higher `z-index` so it layers above the stall/data UIs.
+- **Next from here:** extract movement/camera from `src/main.ts` into a small module; optional key rebinds; biomes/edge dressing.
+
 ## Current Baseline
 - A playable prototype exists with movement, farming interactions, HUD, NPC wandering, and shop/economy foundations.
 - Dev server is healthy.
-- Production build needs TypeScript cleanup in `src/main.ts` before release readiness.
+- [AMENDED 2026-04-22]: Production build is green; remaining release work is modularization and content depth, not TS blockers in `main.ts` alone.
 
 ## Phase 1 - Stabilize Core (Now)
 Focus: reliability and maintainability.
 
-- Fix TypeScript build errors so `npm run build` passes consistently
-- Split large logic blocks from `src/main.ts` into focused modules
-- Add a minimal smoke-test checklist for core loops (move, plant, harvest, shop)
+- [AMENDED 2026-04-22]: TypeScript build passes; `BeehiveManager` and core game compile cleanly.
+- [AMENDED 2026-04-22]: Began `src/main.ts` split (`gameState`, `gameConstants`, `saveFormat`); more extraction still planned.
+- [AMENDED 2026-04-22]: `DOCS/SMOKE_TEST.md` added for move/plant/harvest/shop/canvas-vs-UI checks.
 - Ensure documentation stays in sync for every system-level change
 
 ## Phase 2 - Deepen Gameplay
@@ -89,9 +97,24 @@ Focus: quality and shareability.
 - Gameplay loop is fun for at least a short repeat session (10-20 minutes)
 
 ## Immediate Next 3 Tasks
-1. Resolve current TypeScript build issues in `src/main.ts`.
-2. Extract one subsystem from `src/main.ts` (recommended: input or inventory handling).
-3. Add one new crop type with tuned economy values and document it.
+1. [DONE 2026-04-22] TypeScript / build: `npm run build` clean; `BeehiveManager` time fix.
+2. [PARTIAL 2026-04-22] Extract subsystems: `gameState`, `gameConstants`, `saveFormat` live; still recommend movement/camera extraction next.
+3. [DONE 2026-04-22] New crop: **tomato** + economy tuning + docs (`FEATURES`, `CHANGELOG`).
+
+## Immediate Next 3 Tasks (revised 2026-04-22)
+1. [DONE 2026-04-22] Extract movement + camera + bounds from `src/main.ts` into `src/systems/` and `src/config/`.
+2. [OPEN] Key rebind table for pan / interact / shop.
+3. [DONE 2026-04-22] Plumb `saveFormat` to `localStorage` (load on boot, autosave, `beforeunload`).
+
+## Immediate Next 3 Tasks (revised again 2026-04-22)
+1. [DONE 2026-04-23] **Save UX:** in-game **Data** (💾): export / import <code>garden3d_save.json</code>, **Reset farm** (clears <code>localStorage</code>, confirm); <code>mergeImportedJson</code> in <code>persistence.ts</code>.
+2. [OPEN] **More `main.ts` splits:** input listeners → <code>src/systems/inputBindings.ts</code> or thin facade.
+3. [PARTIAL 2026-04-23] **Balance:** <code>STATE.timeScale</code> nudged <code>0.1 → 0.12</code> (slightly snappier days); more crop tuning still open.
+
+## Immediate Next 3 Tasks (revised 2026-04-23)
+1. **Input module:** extract <code>keydown</code> / <code>wheel</code> / <code>mousedown</code> from <code>main.ts</code> to reduce file size.
+2. **Data UX:** after import failure, show which field failed (optional); “copy save to clipboard” for quick backup.
+3. **NPCs:** one scripted <strong>greeting</strong> or stall idle near market (Phase 3).
 
 ## Roadmap Update (2026-04-22)
 
@@ -139,3 +162,35 @@ Focus: quality and shareability.
 - Introduce save/load snapshot format with backward-compatible version field.
 - Add lightweight telemetry counters in dev mode (actions/min, crop success rate).
 - Add `src/main.ts` decomposition milestones with "one system per file" target.
+
+## Sequential ideation & MCP note (2026-04-22)
+
+### How to run structured thinking here
+- This repository does not ship a **Sequential Thinking** MCP in `mcps/` (empty / not present). In Cursor, enable that MCP in **Settings → MCP** if you want step-by-step reasoning from an external tool.
+- **Lightweight process without MCP:** (1) list **constraints** (WebGPU, single bundle, no new deps) → (2) list **risks** (save migration, `main.ts` size) → (3) pick **smallest shippable** slice → (4) add **one** smoke-test line → (5) append docs.
+
+### [2026-04-23] Docker MCP (`user-MCP_DOCKER`) + Sequential Thinking
+- **Reality check:** The Cursor project mirror may show `mcps/user-MCP_DOCKER/STATUS.md` = *“The MCP server errored”* and **no** `tools/*.json` descriptors until the server is healthy. The coding agent then **cannot** invoke Docker MCP tools (including any Sequential Thinking bridge) until Cursor reports the server as connected.
+- **Fix on your machine:** Cursor **Settings → MCP** → open **MCP_DOCKER** / `user-MCP_DOCKER`, read the error, ensure the **Docker** daemon is running and the **container or command** that MCP config expects is up, then **reload** MCP. When fixed, `mcps/user-MCP_DOCKER/tools/` should populate; use the **exact** tool name/schema from those JSON files (varies by image).
+- **If you use a Sequential Thinking server via Docker:** keep its image, port, and env in sync with the MCP config so the bridge starts before Cursor connects.
+
+### Extra ideas (backlog — not committed)
+- **Photo / scenic mode:** pause time, hide HUD, orbit camera for screenshots / sharing.
+- **Greenhouse / cellar:** out-of-season growing or crop storage to extend the economy loop.
+- **Single-undo** or “confirm destroy” for misplaced plants (accessibility + mistake recovery).
+- **Pest / pressure layer:** light bug pressure that lowers sell price until watered with “tonic” or companion flowers (tension, not tedium).
+- **Async farm “ghost” visit:** copy farm layout to a read-only visit URL (later: multiplayer).
+- **Data-driven crops:** load crop defs from `public/crops.json` to iterate balance without recompiles.
+- **Journal / almanac UI:** in-game tab that mirrors `ROADMAP.md` “what’s next” (meta, but helps retention).
+
+## Roadmap execution (2026-04-22 — follow-up)
+- **Movement + camera** extracted to `src/systems/playerMovement.ts` and `src/systems/followCamera.ts`; bounds live in `src/config/worldConfig.ts`, follow tuning in `src/config/cameraConfig.ts`.
+- **localStorage persistence:** `src/save/persistence.ts` + extended `GameSaveV1` (player pose, pan, zoom, crops). Autosave ~20s, save on `beforeunload`, load on boot with crop rehydration.
+- **Dev:** `src/dev/devCounters.ts` (plants / harvests / waters / `saveWrites`) on `window.__garden3dStats` in dev; `tsconfig` references `vite/client` for `import.meta.env`.
+
+## Roadmap execution (2026-04-23)
+- [Phase 3 / NPC] **Practical slice:** `src/entities/NPCManager.ts` now uses **named** neighbors, **POI-biased** wander (market, well, campfire, farm), optional **bark toasts** via `update(..., { playerPos, onBark })` from `main.ts` with a **12s** global proximity cooldown. Next: dialogue, schedules, or relationship hooks — see Phase 3 list above.
+
+## Roadmap execution (2026-04-23 — save + balance)
+- **Farm data UI:** `index.html` + `#data-modal` — export `garden3d_save.json`, import (reload), reset with `confirm()`. `anyModalOpen()` blocks the same input paths as the shop. **`persistence`:** `mergeImportedJson`, `clearSaveStorageOnly`.
+- **Balance:** default `timeScale` **0.12** in `src/state/gameState.ts` (was 0.1).

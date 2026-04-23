@@ -18,14 +18,71 @@
         
         <div class="hud-top">
           <div class="hud-panel clock-panel">
+            <span id="time-phase" class="time-phase" title="Time of day" aria-hidden="true">☀️</span>
             <span id="day-display">Day 1</span>
             <span id="time-display">08:00 AM</span>
-            <button id="ff-btn" class="ff-btn hidden">⏭ Skip Night</button>
+            <button type="button" id="ff-btn" class="ff-btn hidden">⏭ Skip Night</button>
           </div>
-          <div class="hud-panel wallet-panel">
-            🪙 <span id="gold-display">50</span> Gold
+          <div class="hud-top-right">
+            <div class="hud-panel travel-panel">
+              <div class="travel-panel__copy">
+                <span class="travel-panel__eyebrow">Area</span>
+                <strong id="area-label">Farmstead</strong>
+              </div>
+              <button type="button" id="travel-btn" class="travel-btn" aria-label="Travel to another area">Travel</button>
+            </div>
+            <div class="hud-panel wallet-panel">
+              <button type="button" id="open-data-btn" class="data-menu-btn" title="Save, import, or reset" aria-label="Open save and data">💾</button>
+              <span>🪙 <span id="gold-display">50</span> Gold</span>
+            </div>
           </div>
         </div>
+
+        <aside id="inventory-panel" class="inventory-panel hidden" aria-label="Backpack and supplies">
+          <div class="inventory-panel__head">
+            <h2 class="inventory-panel__title">Backpack</h2>
+            <button type="button" class="inventory-panel__close" id="close-inventory" aria-label="Close inventory">✖</button>
+          </div>
+          <p class="inventory-panel__hint">Seeds, water, and gold. Use <kbd>1</kbd>–<kbd>5</kbd> for tools, <kbd>Space</kbd> on a tile, <kbd>F</kbd> near a neighbor.</p>
+          <ul class="inventory-list">
+            <li><span class="inv-icon" aria-hidden="true">🪙</span> Gold: <strong id="inv-gold">50</strong></li>
+            <li><span class="inv-icon" aria-hidden="true">🥕</span> Carrot seeds: <strong id="inv-carrot">5</strong></li>
+            <li><span class="inv-icon" aria-hidden="true">🌸</span> Flower seeds: <strong id="inv-flower">5</strong></li>
+            <li><span class="inv-icon" aria-hidden="true">🍅</span> Tomato seeds: <strong id="inv-tomato">3</strong></li>
+            <li><span class="inv-icon" aria-hidden="true">💧</span> Watering can: <strong id="inv-water">10</strong> / 10</li>
+          </ul>
+        </aside>
+
+        <aside id="plant-panel" class="plant-panel hidden" aria-live="polite" aria-label="Tile crop status">
+          <div class="plant-panel__head">
+            <span id="plant-panel-icon" class="plant-panel__icon" aria-hidden="true">🌱</span>
+            <div class="plant-panel__titles">
+              <span class="plant-panel__crop" id="plant-panel-title">—</span>
+              <span class="plant-panel__status" id="plant-panel-status">—</span>
+            </div>
+          </div>
+          <div class="plant-panel__meters">
+            <div class="plant-meter">
+              <div class="plant-meter__head">
+                <span class="plant-meter__icon" title="Soil water">💧</span>
+                <span class="plant-meter__label" id="plant-water-label">—</span>
+              </div>
+            </div>
+            <div class="plant-meter">
+              <div class="plant-meter__head">
+                <span class="plant-meter__icon" title="Growth time">⏱️</span>
+                <span class="plant-meter__label" id="plant-timer-label">—</span>
+              </div>
+            </div>
+            <div class="plant-growth">
+              <div class="plant-growth__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="plant-progress-bar">
+                <div class="plant-growth__fill" id="plant-progress-fill"></div>
+                <div class="plant-growth__shine" aria-hidden="true"></div>
+              </div>
+              <span class="plant-growth__pct" id="plant-progress-pct">0%</span>
+            </div>
+          </div>
+        </aside>
 
         <div class="hud-bottom">
           <div class="hotbar">
@@ -40,11 +97,16 @@
               <span class="qty" id="qty-flower">5</span>
             </button>
             <button class="slot" data-slot="2">
+              <span class="icon">🍅</span> 
+              <span class="label">Tomato</span>
+              <span class="qty" id="qty-tomato">3</span>
+            </button>
+            <button class="slot" data-slot="3">
               <span class="icon">💧</span> 
               <span class="label">Water</span>
               <span class="qty" id="qty-water">10</span>
             </button>
-            <button class="slot action" data-slot="3">
+            <button class="slot action" data-slot="4">
               <span class="icon">🪓</span> 
               <span class="label">Harvest</span>
             </button>
@@ -55,16 +117,30 @@
           Move cursor over a tile to preview actions.
         </div>
 
+        <p class="hud-help" role="note" aria-label="Keyboard controls">
+          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span class="help-sep">·</span>move
+          <span class="help-sep">·</span><kbd>Shift</kbd> sprint
+          <span class="help-sep">·</span><kbd>arrows</kbd> pan
+          <span class="help-sep">·</span><kbd>B</kbd> market
+          <span class="help-sep">·</span><kbd>1</kbd>–<kbd>5</kbd> tools
+          <span class="help-sep">·</span><kbd>Space</kbd> use
+          <span class="help-sep">·</span><kbd>F</kbd> talk
+          <span class="help-sep">·</span><kbd>E</kbd> backpack
+          <span class="help-sep">·</span><kbd>Esc</kbd> menu
+        </p>
+        <p class="hud-help-short" aria-hidden="true">WASD · F · E · Esc · B · 1–5</p>
+
         <div id="toast-container"></div>
+        <span id="app-version" class="version-badge">v0.1.0</span>
         
       </div>
 
       <!-- Shop Modal Overlay -->
-      <div id="shop-modal" class="hidden">
+      <div id="shop-modal" class="hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="shop-title">
         <div class="shop-window">
           <div class="shop-header">
-            <h2>Town Market</h2>
-            <button id="close-shop">✖</button>
+            <h2 id="shop-title">Town Market</h2>
+            <button type="button" id="close-shop" aria-label="Close shop">✖</button>
           </div>
           <div class="shop-grid">
             <div class="shop-item">
@@ -83,6 +159,58 @@
               </div>
               <button class="buy-btn" data-type="flower" data-price="12">Buy (-12G)</button>
             </div>
+            <div class="shop-item">
+              <div class="item-icon">🍅</div>
+              <div class="item-info">
+                <h3>Tomato Seeds</h3>
+                <p>Mid-tier crop. Sells for 40G when ripe.</p>
+              </div>
+              <button class="buy-btn" data-type="tomato" data-price="18">Buy (-18G)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pause / escape menu -->
+      <div id="pause-modal" class="hidden pause-overlay" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="pause-title">
+        <div class="shop-window pause-window">
+          <div id="pause-main">
+            <h2 id="pause-title" class="pause-title">Paused</h2>
+            <p class="pause-lead">Game time and villagers are stopped until you resume.</p>
+            <div class="pause-menu-actions">
+              <button type="button" class="data-action-btn" id="pause-resume-btn">Resume</button>
+              <button type="button" class="data-action-btn data-action-btn--secondary" id="pause-settings-btn">Settings</button>
+              <button type="button" class="data-action-btn data-action-btn--danger" id="pause-quit-btn">Quit</button>
+            </div>
+            <p class="pause-hint"><kbd>Esc</kbd> to resume or open this menu</p>
+          </div>
+          <div id="pause-settings" class="hidden">
+            <h2 class="pause-title">Settings</h2>
+            <p class="pause-lead">More options (audio, controls) can land here. For now:</p>
+            <ul class="settings-list">
+              <li>Save / import / reset: use <strong>💾 Farm data</strong> in the top bar.</li>
+              <li>Version: <span id="settings-version">v0.1.0</span></li>
+            </ul>
+            <button type="button" class="data-action-btn" id="pause-back-btn">← Back</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Data / save modal -->
+      <div id="data-modal" class="hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="data-modal-title">
+        <div class="shop-window data-window">
+          <div class="shop-header">
+            <h2 id="data-modal-title">Farm data</h2>
+            <button type="button" id="close-data" aria-label="Close">✖</button>
+          </div>
+          <p class="data-modal-lead">Export a backup, import a <code>garden3d_save.json</code>, or reset and start fresh (clears <code>localStorage</code>).</p>
+          <div class="data-modal-actions">
+            <button type="button" id="export-save-btn" class="data-action-btn">Export save file</button>
+            <label class="data-import-label">
+              <input type="file" id="import-save-file" accept="application/json,.json" class="data-file-input" />
+              <span class="data-action-btn data-action-btn--secondary">Import save file…</span>
+            </label>
+            <button type="button" id="reset-farm-btn" class="data-action-btn data-action-btn--danger">Reset farm (clear save)</button>
           </div>
         </div>
       </div>

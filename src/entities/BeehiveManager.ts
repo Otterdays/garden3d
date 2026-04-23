@@ -175,7 +175,7 @@ export class BeehiveManager {
   }
   
   // Update all beehives (honey production, animations)
-  public update(dt: number,now: number) {
+  public update(dt: number, timeMs: number) {
     // Update each hive
     for (const hive of this.beehives) {
       // Honey production timer
@@ -203,11 +203,11 @@ export class BeehiveManager {
     }
     
     // Update bee particles
-    this.updateBees(dt);
+    this.updateBees(dt, timeMs);
   }
   
   // Update bee particle positions
-  private updateBees(dt: number) {
+  private updateBees(dt: number, timeMs: number) {
     if (!this.beeMesh || this.beehives.length === 0) {
       // Hide bees if no hives
       if (this.beeMesh) this.beeMesh.visible = false;
@@ -234,8 +234,8 @@ export class BeehiveManager {
       this.beePositions[idx + 2] += (targetZ - this.beePositions[idx + 2]) * 0.5 * dt;
       
       // Add buzz motion
-      this.beePositions[idx] += Math.sin(now * 0.02 + i) * 0.01;
-      this.beePositions[idx + 1] += Math.cos(now * 0.03 + i * 0.5) * 0.005;
+      this.beePositions[idx] += Math.sin(timeMs * 0.02 + i) * 0.01;
+      this.beePositions[idx + 1] += Math.cos(timeMs * 0.03 + i * 0.5) * 0.005;
     }
     
     (this.beeMesh.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;

@@ -17,10 +17,13 @@ This project explores a relaxing, game-like sandbox where the player can plant, 
 
 ## Current Features
 
-- Grid-based gardening interactions
-- Dynamic world rendering with Three.js
-- Early game-loop foundations for planting and harvesting
-- UI interactions for core player actions
+- Grid-based gardening interactions (multiple seed types: carrot, flower, tomato)
+- Dynamic world rendering with **Three.js** and **WebGPU**
+- Day/night-style lighting, camera follow, and a small open town-style play space
+- Planting, watering, harvest, and economy loop (market stall shop)
+- **HUD:** wallet, day/time with a day/night indicator, tool hotbar with quantities, toasts, interaction hint, **in-game keyboard hints** (desktop + a compact line on small screens), and a **version badge** tied to `APP_VERSION` in `src/config/gameConstants.ts`
+- **Shop:** seed purchases with buttons **disabled** when you cannot afford the price; open with `B` near the stall (see in-game **Update log** on first run for the full control list)
+- Styling lives mainly in `src/style.css` (glass panels, hotbar, modals, responsive tweaks)
 
 ## Tech Stack
 
@@ -56,13 +59,28 @@ By default, Vite serves the app at `http://localhost:5173/`.
 npm run build
 ```
 
-If this command fails, check TypeScript errors in `src/main.ts` first.
+If this command fails, run `npx tsc --noEmit` and fix reported sources (often `src/main.ts` or `src/entities/`).
+
+## Controls (in-game)
+
+| Input | Action |
+| --- | --- |
+| `W` `A` `S` `D` | Move |
+| `Shift` | Sprint |
+| `Arrow keys` | Pan camera |
+| `Shift` + mouse wheel | Zoom |
+| `1`–`5` | Select hotbar tool |
+| Mouse wheel | Cycle hotbar |
+| `Space` | Use tool on targeted tile |
+| `B` | Toggle shop (when near the market stall) |
+| `E` | Toggle Backpack (gold + supply counts) |
+| `Escape` | Pause (Resume / Settings / Quit), or close modals in stack order (shop, data, inventory) |
 
 ## Project Structure
 
 ```text
 garden3d/
-|- src/            # Game and rendering logic
+|- src/            # Game and rendering logic (`main.ts`, `state/`, `config/`, …)
 |- DOCS/           # Project documentation
 |- index.html      # App entry HTML
 |- package.json    # Scripts and dependencies
@@ -78,6 +96,7 @@ garden3d/
 - [Style Guide](DOCS/STYLE_GUIDE.md)
 - [Scratchpad](DOCS/SCRATCHPAD.md)
 - [Changelog](DOCS/CHANGELOG.md)
+- [Smoke test checklist](DOCS/SMOKE_TEST.md)
 - [Software Bill of Materials](DOCS/SBOM.md)
 
 ## Development Notes

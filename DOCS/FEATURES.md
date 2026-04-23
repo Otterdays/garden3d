@@ -11,6 +11,7 @@ This document lists the gameplay and technical features currently present in Gar
 - Planting and harvesting flow
 - Multi-stage crop growth behavior
 - Auto-switch quality-of-life behavior for harvesting
+- Three seed types in play: **carrot**, **flower**, and **tomato** (mid-tier growth and sell value)
 
 ### Player Controls
 - WASD movement
@@ -29,16 +30,22 @@ This document lists the gameplay and technical features currently present in Gar
 ### User Interface and UX
 - HUD with wallet/time/hotbar visibility
 - Action feed for toasts and errors
-- Shop modal for economy interactions
-- Escape key modal closing
+- Shop modal for economy interactions; **Farm data** (💾) for export / import of `garden3d_save.json` and reset (local save)
+- [2026-04-22] **`E` — Backpack** panel showing gold and seed/water counts (toggles; blocked while the pause menu is open)
+- [2026-04-22] **`Esc` — Pause** overlay: **Resume** (or `Esc` again), **Settings** (read-only stub: version, pointer to Farm data), **Quit** (confirm). Opening shop or Farm data closes backpack/pause as needed; `Esc` also closes other modals in stack order
+- Escape key modal closing (shop, data, inventory; + pause resume when pause is top)
 - Hotbar tooltips/labels
 - Time fast-forward action (night skip)
 - Contextual interaction hint text that previews current tile action before interaction
+- [2026-04-22] **Keyboard hint** bar (styled keys) on desktop; **abbreviated** control line on narrow viewports; **safe-area** spacing for notched devices
+- [2026-04-22] **Version badge** in the HUD (kept in sync with `APP_VERSION` / `package.json`)
+- [2026-04-22] **Time-of-day** icon beside the clock (day vs night)
+- [2026-04-22] **Shop** purchase buttons show **disabled** state when the player cannot afford the item; modal visibility/ARIA updated when closed
 
 ### Entities and Systems
 - Procedural player model foundation
 - Modular NPC manager architecture
-- NPC wandering behavior
+- NPC wandering behavior (town **POI** targets: market, well, campfire, farm plot) with **named** neighbors and **proximity barks** (toasts, ~12s global cooldown) when you walk close
 - Global state and calendar logic
 
 ## Technical Features
@@ -46,6 +53,9 @@ This document lists the gameplay and technical features currently present in Gar
 - TypeScript codebase
 - Three.js rendering stack with WebGPU focus
 - TSL-based shader logic for environmental effects
+- [2026-04-22] Core state in `src/state/gameState.ts`; version/slot constants in `src/config/gameConstants.ts`; save snapshot + **localStorage** in `src/save/saveFormat.ts` & `persistence.ts` (autosave, boot restore, crop rehydration)
+- [2026-04-22] Player walk + camera follow in `src/systems/playerMovement.ts` and `src/systems/followCamera.ts` (keeps `main.ts` thinner)
+- [2026-04-22] Development-only stats object on `window.__garden3dStats` (Vite dev)
 
 ## Planned Features (Next)
 - Save/load game state
